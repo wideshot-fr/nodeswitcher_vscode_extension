@@ -1,0 +1,187 @@
+{
+  "name": "nodeswitcher",
+  "displayName": "nodeswitcher",
+  "description": "Switch and install Node.js versions from the status bar using n (macOS/Linux) or NVM (nvm-windows on Windows, nvm-sh on Unix). Windows uses NVM only; Unix prefers n when both n and nvm are installed.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nodeswitcher-sidebar",
+          "title": "NodeSwitcher",
+          "icon": "media/logo.svg"
+        }
+      ]
+    },
+    "views": {
+      "nodeswitcher-sidebar": [
+        {
+          "id": "nodeswitcher.mainView",
+          "name": "NodeSwitcher"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "NodeSwitcher",
+      "properties": {
+        "nodeswitcher.backendPreference": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "n",
+            "nvm"
+          ],
+          "default": "auto",
+          "description": "When both n and nvm-sh are on PATH (Linux only), which to prefer. 'auto' follows your last choice in this workspace. Windows uses nvm; macOS uses n.",
+          "scope": "application"
+        },
+        "nodeswitcher.showInStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the NodeSwitcher entry in the status bar.",
+          "scope": "application"
+        },
+        "nodeswitcher.statusBarPriority": {
+          "type": "number",
+          "default": 1000,
+          "minimum": -10000,
+          "maximum": 10000,
+          "description": "Status bar item priority (higher appears further left among left-aligned items). Reload the window after changing."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "nodeswitcher.openExtensionSettings",
+        "title": "NodeSwitcher: Open Settings"
+      },
+      {
+        "command": "nodeswitcher.switchNodeVersion",
+        "title": "NodeSwitcher: Open NodeSwitcher"
+      },
+      {
+        "command": "nodeswitcher.openVersionPickerQuickPick",
+        "title": "NodeSwitcher: Switch Node Version (Quick Pick)"
+      },
+      {
+        "command": "nodeswitcher.refreshNodeVersions",
+        "title": "NodeSwitcher: Refresh Version List"
+      },
+      {
+        "command": "nodeswitcher.chooseProjectNodeMismatch",
+        "title": "NodeSwitcher: Resolve Project Node Version Mismatch"
+      },
+      {
+        "command": "nodeswitcher.sidebarApplyVersion",
+        "title": "NodeSwitcher: Apply Version From Sidebar"
+      },
+      {
+        "command": "nodeswitcher.sidebarLoadAvailable",
+        "title": "NodeSwitcher: Show Uninstalled Node Versions (Sidebar)"
+      },
+      {
+        "command": "nodeswitcher.openSidebar",
+        "title": "NodeSwitcher: Open Sidebar"
+      },
+      {
+        "command": "nodeswitcher.sidebarInlineActivate",
+        "title": "NodeSwitcher: Set active",
+        "icon": "$(play)"
+      },
+      {
+        "command": "nodeswitcher.sidebarVersionDetails",
+        "title": "NodeSwitcher: Path & uninstall",
+        "icon": "$(gear)"
+      }
+    ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "nodeswitcher.sidebarInlineActivate",
+          "when": "view == 'nodeswitcher.mainView' && viewItem == 'nodeswitcher.version.installed'",
+          "group": "inline@1"
+        },
+        {
+          "command": "nodeswitcher.sidebarInlineActivate",
+          "when": "view == 'nodeswitcher.mainView' && viewItem == 'nodeswitcher.version.available'",
+          "group": "inline@1"
+        },
+        {
+          "command": "nodeswitcher.sidebarInlineActivate",
+          "when": "view == 'nodeswitcher.mainView' && viewItem == 'nodeswitcher.switchToProject'",
+          "group": "inline@1"
+        },
+        {
+          "command": "nodeswitcher.sidebarVersionDetails",
+          "when": "view == 'nodeswitcher.mainView' && viewItem == 'nodeswitcher.version.current'",
+          "group": "inline@2"
+        },
+        {
+          "command": "nodeswitcher.sidebarVersionDetails",
+          "when": "view == 'nodeswitcher.mainView' && viewItem == 'nodeswitcher.version.installed'",
+          "group": "inline@2"
+        },
+        {
+          "command": "nodeswitcher.sidebarVersionDetails",
+          "when": "view == 'nodeswitcher.mainView' && viewItem == 'nodeswitcher.version.available'",
+          "group": "inline@2"
+        },
+        {
+          "command": "nodeswitcher.sidebarVersionDetails",
+          "when": "view == 'nodeswitcher.mainView' && viewItem == 'nodeswitcher.switchToProject'",
+          "group": "inline@2"
+        }
+      ]
+    },
+    "icons": {
+      "nodeswitcher-logo": {
+        "description": "NodeSwitcher logo (from media/logo.svg) for status bar",
+        "default": {
+          "fontPath": "media/status-font/nodeswitcher-status.ttf",
+          "fontCharacter": "\\ea01"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "icons:build": "node scripts/build-status-font.mjs",
+    "vscode:prepublish": "npm run icons:build && npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/semver": "^7.7.1",
+    "@types/vscode": "^1.110.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "eslint": "^9.39.3",
+    "svg2ttf": "^6.0.3",
+    "svgicons2svgfont": "^15.0.1",
+    "ts-loader": "^9.5.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1",
+    "webpack": "^5.105.3",
+    "webpack-cli": "^6.0.1"
+  },
+  "dependencies": {
+    "semver": "^7.7.4"
+  }
+}

@@ -1,0 +1,13 @@
+# Repo root (if you add tooling or packages here)
+out/
+dist/
+node_modules/
+.vscode-test/
+*.vsix
+
+# Same rules as nodeswitcher/.gitignore — extension lives under nodeswitcher/
+nodeswitcher/out/
+nodeswitcher/dist/
+nodeswitcher/node_modules/
+nodeswitcher/.vscode-test/
+nodeswitcher/*.vsix

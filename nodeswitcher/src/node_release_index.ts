@@ -1,0 +1,129 @@
+import * as https from 'https';
+import { compare_versions_desc, normalize_version } from './version_utils';
+
+const INDEX_URL = 'https://nodejs.org/dist/index.json';
+const CACHE_MS = 6 * 60 * 60 * 1000;
+const PLACEHOLDER_CACHE_MS = 60_000;
+
+type IndexRow = {
+	lts?: boolean | string;
+	version?: string;
+};
+
+type IndexCache = {
+	expiry_ms: number;
+	lts_majors: Set<number>;
+	latest_stable_by_major: Map<number, string>;
+};
+
+let cache: IndexCache | null = null;
+
+function is_official_stable_release(version_field: string): boolean {
+	return /^v\d+\.\d+\.\d+$/.test(version_field);
+}
+
+export async function sort_versions_for_display(versions: string[]): Promise<string[]> {
+	if (versions.length === 0) {
+		return versions;
+	}
+	const { lts_majors } = await ensure_index_cache();
+	return [...versions].sort((left, right) => compare_lts_major_first(left, right, lts_majors));
+}
+
+export async function get_latest_stable_per_major_sorted(limit: number): Promise<string[]> {
+	const { lts_majors, latest_stable_by_major } = await ensure_index_cache();
+	const list = [...latest_stable_by_major.values()];
+	const sorted = list.sort((left, right) => compare_lts_major_first(left, right, lts_majors));
+	return sorted.slice(0, limit);
+}
+
+async function ensure_index_cache(): Promise<IndexCache> {
+	if (cache && Date.now() < cache.expiry_ms) {
+		return cache;
+	}
+	try {
+		const built = await build_index_cache_from_network();
+		cache = { expiry_ms: Date.now() + CACHE_MS, ...built };
+		return cache;
+	} catch {
+		if (cache) {
+			return cache;
+		}
+		const empty: IndexCache = {
+			expiry_ms: Date.now() + PLACEHOLDER_CACHE_MS,
+			lts_majors: new Set(),
+			latest_stable_by_major: new Map()
+		};
+		cache = empty;
+		return empty;
+	}
+}
+
+async function build_index_cache_from_network(): Promise<{
+	lts_majors: Set<number>;
+	latest_stable_by_major: Map<number, string>;
+}> {
+	const rows = (await fetch_json(INDEX_URL)) as IndexRow[];
+	const lts_majors = new Set<number>();
+	const latest_stable_by_major = new Map<number, string>();
+
+	for (const row of rows) {
+		if (!row?.version || !is_official_stable_release(String(row.version))) {
+			continue;
+		}
+		const normalized = normalize_version(String(row.version));
+		const major = Number(normalized.split('.')[0]);
+		if (Number.isNaN(major)) {
+			continue;
+		}
+		const lts = row.lts;
+		if (lts !== undefined && lts !== null && lts !== false) {
+			lts_majors.add(major);
+		}
+		const prev = latest_stable_by_major.get(major);
+		if (!prev || compare_versions_desc(prev, normalized) > 0) {
+			latest_stable_by_major.set(major, normalized);
+		}
+	}
+
+	return { lts_majors, latest_stable_by_major };
+}
+
+function fetch_json(url: string): Promise<unknown> {
+	return new Promise((resolve, reject) => {
+		const request = https.get(url, { timeout: 12_000 }, (response) => {
+			const chunks: Buffer[] = [];
+			response.on('data', (chunk: Buffer) => chunks.push(chunk));
+			response.on('end', () => {
+				if (response.statusCode && response.statusCode >= 400) {
+					reject(new Error(`HTTP ${response.statusCode}`));
+					return;
+				}
+				try {
+					resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+				} catch (error) {
+					reject(error);
+				}
+			});
+		});
+		request.on('error', reject);
+		request.on('timeout', () => {
+			request.destroy();
+			reject(new Error('timeout'));
+		});
+	});
+}
+
+function compare_lts_major_first(left: string, right: string, lts_majors: Set<number>): number {
+	const left_major = Number(left.split('.')[0]);
+	const right_major = Number(right.split('.')[0]);
+	const left_line = !Number.isNaN(left_major) && lts_majors.has(left_major);
+	const right_line = !Number.isNaN(right_major) && lts_majors.has(right_major);
+	if (left_line !== right_line) {
+		return left_line ? -1 : 1;
+	}
+	if (left_major !== right_major) {
+		return right_major - left_major;
+	}
+	return compare_versions_desc(left, right);
+}
