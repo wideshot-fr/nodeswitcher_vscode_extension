@@ -6,6 +6,7 @@ import {
 	initialize_status,
 	open_version_picker,
 	refresh_status_bar,
+	repaint_status_bar_for_display_settings,
 	run_resolve_project_node_mismatch_command,
 	STATUS_BAR_ICON
 } from './node_backends';
@@ -32,9 +33,11 @@ export function activate(context: vscode.ExtensionContext): void {
 				return;
 			}
 			apply_nodeswitcher_status_bar_visibility(status_item);
-			if (e.affectsConfiguration('nodeswitcher.backendPreference')) {
-				void refresh_status_bar(context, status_item, true);
-			}
+			setTimeout(() => {
+				apply_nodeswitcher_status_bar_visibility(status_item);
+				const run = repaint_status_bar_for_display_settings(context, status_item);
+				void run.catch(() => refresh_status_bar(context, status_item, true));
+			}, 0);
 		})
 	);
 

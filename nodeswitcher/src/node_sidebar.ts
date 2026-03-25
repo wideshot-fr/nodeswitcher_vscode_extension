@@ -37,8 +37,8 @@ export type SidebarElement =
 			description?: string;
 			tooltip?: string;
 	  }
-	| { kind: 'load_available'; backend: NodeBackend; label: string; description?: string; tooltip?: string }
-	| { kind: 'open_sidebar'; label: string; description?: string; tooltip?: string }
+	| { kind: 'toggle_available'; backend: NodeBackend; label: string; description?: string; tooltip?: string }
+	| { kind: 'open_settings'; label: string; description?: string; tooltip?: string }
 	| {
 			kind: 'switch_to_project';
 			backend: NodeBackend;
@@ -215,26 +215,26 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 				};
 				return item;
 			}
-			case 'load_available': {
+			case 'toggle_available': {
 				const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
 				item.description = element.description;
 				item.tooltip = element.tooltip;
 				item.iconPath = new vscode.ThemeIcon('list-flat');
 				item.command = {
-					command: 'nodeswitcher.sidebarLoadAvailable',
-					title: 'Show uninstalled',
+					command: 'nodeswitcher.sidebarToggleAvailable',
+					title: 'Toggle uninstalled versions',
 					arguments: [element.backend]
 				};
 				return item;
 			}
-			case 'open_sidebar': {
+			case 'open_settings': {
 				const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
 				item.description = element.description;
 				item.tooltip = element.tooltip;
 				item.iconPath = new vscode.ThemeIcon('settings-gear');
 				item.command = {
-					command: OPEN_SIDEBAR_COMMAND_ID,
-					title: 'Open NodeSwitcher sidebar'
+					command: 'nodeswitcher.openExtensionSettings',
+					title: 'Open NodeSwitcher settings'
 				};
 				return item;
 			}
@@ -312,8 +312,11 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 			this.switchChildrenCache!,
 			this.switchBackend!,
 			this.switchIncludeAvailable,
+			true,
 			project_pin,
-			this.context.extensionPath
+			this.context.extensionPath,
+			false,
+			false
 		);
 		return this.pickerItemsToElements(items, this.switchBackend!);
 	}
@@ -354,9 +357,9 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 			if (it.kind === vscode.QuickPickItemKind.Separator) {
 				continue;
 			}
-			if (it.action === 'load_available') {
+			if (it.action === 'toggle_available') {
 				rows.push({
-					kind: 'load_available',
+					kind: 'toggle_available',
 					backend,
 					label: strip_footer_quickpick_padding(it.label),
 					description:
@@ -365,9 +368,9 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 				});
 				continue;
 			}
-			if (it.action === 'open_sidebar') {
+			if (it.action === 'open_settings') {
 				rows.push({
-					kind: 'open_sidebar',
+					kind: 'open_settings',
 					label: strip_footer_quickpick_padding(it.label),
 					description:
 						it.description !== undefined ? strip_footer_quickpick_padding(it.description) : undefined,
@@ -424,6 +427,18 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 			vscode.window.showErrorMessage(`NodeSwitcher failed to load available versions: ${message}`);
 		}
 	}
+
+	async toggleAvailableVersions(backend: NodeBackend): Promise<void> {
+		if (!this.switchBackend || !this.switchChildrenCache || backend !== this.switchBackend) {
+			return;
+		}
+		if (this.switchIncludeAvailable) {
+			this.switchIncludeAvailable = false;
+			this.refresh();
+			return;
+		}
+		await this.loadAvailableVersions(backend);
+	}
 }
 
 function is_sidebar_version_action_element(
@@ -474,8 +489,8 @@ export function registerNodeSidebar(
 		})
 	);
 	context.subscriptions.push(
-		vscode.commands.registerCommand('nodeswitcher.sidebarLoadAvailable', async (backend: NodeBackend) => {
-			await provider.loadAvailableVersions(backend);
+		vscode.commands.registerCommand('nodeswitcher.sidebarToggleAvailable', async (backend: NodeBackend) => {
+			await provider.toggleAvailableVersions(backend);
 		})
 	);
 	context.subscriptions.push(

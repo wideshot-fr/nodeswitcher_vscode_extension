@@ -12,9 +12,7 @@
                 "cwd": "${workspaceFolder}/nodeswitcher"
             },
             "group": "build",
-            "problemMatcher": [
-                "$ts-webpack-watch"
-            ]
+            "problemMatcher": []
         }
     ]
 }

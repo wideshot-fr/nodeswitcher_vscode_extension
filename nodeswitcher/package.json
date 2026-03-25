@@ -10,7 +10,7 @@
     "Other"
   ],
   "activationEvents": [
-    "*"
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -35,21 +35,16 @@
     "configuration": {
       "title": "NodeSwitcher",
       "properties": {
-        "nodeswitcher.backendPreference": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "n",
-            "nvm"
-          ],
-          "default": "auto",
-          "description": "When both n and nvm-sh are on PATH (Linux only), which to prefer. 'auto' follows your last choice in this workspace. Windows uses nvm; macOS uses n.",
-          "scope": "application"
-        },
         "nodeswitcher.showInStatusBar": {
           "type": "boolean",
           "default": true,
           "description": "Show the NodeSwitcher entry in the status bar.",
+          "scope": "application"
+        },
+        "nodeswitcher.minimalStatusBar": {
+          "type": "boolean",
+          "default": false,
+          "description": "Hide status text and show a compact NodeSwitcher icon indicator only.",
           "scope": "application"
         },
         "nodeswitcher.statusBarPriority": {
@@ -87,8 +82,8 @@
         "title": "NodeSwitcher: Apply Version From Sidebar"
       },
       {
-        "command": "nodeswitcher.sidebarLoadAvailable",
-        "title": "NodeSwitcher: Show Uninstalled Node Versions (Sidebar)"
+        "command": "nodeswitcher.sidebarToggleAvailable",
+        "title": "NodeSwitcher: Toggle Uninstalled Node Versions (Sidebar)"
       },
       {
         "command": "nodeswitcher.openSidebar",
