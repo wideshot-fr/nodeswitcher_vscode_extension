@@ -18,7 +18,7 @@
       "activitybar": [
         {
           "id": "nodeswitcher-sidebar",
-          "title": "NodeSwitcher",
+          "title": "NODESWITCHER",
           "icon": "media/logo.svg"
         }
       ]
@@ -27,7 +27,8 @@
       "nodeswitcher-sidebar": [
         {
           "id": "nodeswitcher.mainView",
-          "name": "NodeSwitcher"
+          "name": "NODESWITCHER",
+          "icon": "media/logo.svg"
         }
       ]
     },
@@ -149,6 +150,13 @@
         "default": {
           "fontPath": "media/status-font/nodeswitcher-status.ttf",
           "fontCharacter": "\\ea01"
+        }
+      },
+      "nodeswitcher-bubble-green": {
+        "description": "NodeSwitcher green bubble indicator for status bar",
+        "default": {
+          "fontPath": "media/status-font/nodeswitcher-status.ttf",
+          "fontCharacter": "\\ea02"
         }
       }
     }

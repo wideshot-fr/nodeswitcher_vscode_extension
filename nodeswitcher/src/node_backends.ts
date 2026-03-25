@@ -4,7 +4,11 @@ import { homedir } from 'os';
 import * as path from 'path';
 import { promisify } from 'util';
 import * as vscode from 'vscode';
-import { get_latest_stable_per_major_sorted, sort_versions_for_display } from './node_release_index';
+import {
+	get_latest_stable_per_major_sorted,
+	get_node_release_channels,
+	sort_versions_for_display
+} from './node_release_index';
 import {
 	active_satisfies_declared_range,
 	read_declared_node_range,
@@ -15,11 +19,59 @@ import {
 	get_version_color,
 	normalize_version,
 	parse_versions,
-	sanitize_version,
-	version_major_color_key
+	resolve_version_logo_filename,
+	resolve_version_release_semantics,
+	sanitize_version
 } from './version_utils';
 
 const exec_async = promisify(exec);
+
+class InstallCancelledError extends Error {
+	override readonly name = 'InstallCancelledError';
+	constructor() {
+		super('Install cancelled');
+	}
+}
+
+function exec_async_cancellable(
+	command: string,
+	options: { timeout?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal; maxBuffer?: number }
+): Promise<{ stdout: string; stderr: string }> {
+	const { signal, timeout, env, maxBuffer = 50 * 1024 * 1024 } = options;
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(new InstallCancelledError());
+			return;
+		}
+		const child = exec(command, { timeout, env: env ?? process.env, maxBuffer }, (err, stdout, stderr) => {
+			if (signal?.aborted) {
+				reject(new InstallCancelledError());
+				return;
+			}
+			if (err) {
+				const ex = err as NodeJS.ErrnoException & { killed?: boolean };
+				if (ex.killed) {
+					reject(new InstallCancelledError());
+					return;
+				}
+				reject(err);
+				return;
+			}
+			resolve({ stdout: stdout ?? '', stderr: stderr ?? '' });
+		});
+		const onAbort = () => {
+			child.kill();
+			setTimeout(() => {
+				try {
+					child.kill('SIGKILL');
+				} catch {
+					/* noop */
+				}
+			}, 750);
+		};
+		signal?.addEventListener('abort', onAbort, { once: true });
+	});
+}
 
 export type VersionEntry = {
 	version: string;
@@ -45,7 +97,7 @@ export const OPEN_SIDEBAR_COMMAND_ID = 'nodeswitcher.openSidebar';
 
 export type NodePickerItem = vscode.QuickPickItem & {
 	entry?: VersionEntry;
-	action?: 'load_available' | 'open_settings' | 'switch_to_project' | 'skeleton';
+	action?: 'load_available' | 'open_sidebar' | 'switch_to_project' | 'skeleton';
 	tooltip?: string;
 };
 
@@ -71,6 +123,8 @@ const NVM_SH_INSTALL_SCRIPT_URL =
 	'https://raw.githubusercontent.com/nvm-sh/nvm/refs/tags/v0.40.4/install.sh';
 const NVM_WINDOWS_RELEASES_URL = 'https://github.com/coreybutler/nvm-windows/releases';
 const N_MACOS_DOC_URL = 'https://github.com/tj/n';
+const N_PM_GLOBAL_INSTALL = 'npm install -g n';
+const N_BREW_INSTALL = 'brew install n';
 export const STATUS_BAR_ICON = 'nodeswitcher-logo';
 export const STATUS_BAR_FOREGROUND = '#ffffff';
 const VERSION_LABEL_MIN_CHARS = 18;
@@ -115,7 +169,7 @@ export async function resolve_backend(preferred?: NodeBackend | null, timeout_ms
 	if (process.platform === 'darwin') {
 		if (!(await probe_n(timeout_ms))) {
 			throw new Error(
-				'n is not installed. On macOS, NodeSwitcher uses n — install with Homebrew (`brew install n`) or see https://github.com/tj/n'
+				`On macOS, NodeSwitcher uses the npm package n. Install with \`${N_PM_GLOBAL_INSTALL}\` or \`${N_BREW_INSTALL}\`, then reload. See ${N_MACOS_DOC_URL}`
 			);
 		}
 		return 'n';
@@ -167,13 +221,13 @@ function apply_status_tooltip(
 	const suffix = tag ? ` (${tag})` : '';
 	const pin_line =
 		project_pin && normalize_version(active_for_tooltip) !== normalize_version(project_pin)
-			? `\n\nProject needs: ${node_version_display_v(project_pin)}\nCurrent version is: ${node_version_display_v(active_for_tooltip)}\n\nClick on the red status bar item to open version selection.`
+			? `\n\nMismatch: Current Node (${node_version_display_v(active_for_tooltip)}) doesn't match the project's Node version (${node_version_display_v(project_pin)}).\n\nClick to open version selection.`
 			: '';
 	if (context.workspaceState.get<boolean>(PICKER_OPENED_KEY) === true) {
 		const version = context.workspaceState.get<string>(VERSION_STATE_KEY) ?? '';
 		status_item.tooltip = version
-			? `NodeSwitcher · Node ${version}${suffix} · ${host_platform_label()}${pin_line}`
-			: `NodeSwitcher${suffix} · ${host_platform_label()}${pin_line}`;
+			? `Node ${version}${suffix} · ${host_platform_label()}${pin_line}`
+			: `${host_platform_label()}${pin_line}`;
 		return;
 	}
 	const base = tag
@@ -195,16 +249,16 @@ function apply_project_mismatch_bar_tooltip(
 	const suffix = tag ? ` (${tag})` : '';
 	const needs = build_project_needs_display(declared_mismatch, declared_spec, pin_mismatch, pin);
 	const current_v = node_version_display_v(active_version);
-	const click_hint = 'Click on the red status bar item to open version selection.';
-	const mismatch_block =
-		needs.length > 0
-			? `Project needs: ${needs}\nCurrent version is: ${current_v}\n\n${click_hint}`
-			: `Current version is: ${current_v}\n\n${click_hint}`;
+	const click_hint = 'Click to open version selection.';
+	const project_v = needs.length > 0 ? needs : 'a different version';
+	const mismatch_block = `Mismatch: Current Node (${current_v}) doesn't match the project's Node version (${project_v}).\n\n${click_hint}`;
 	if (context.workspaceState.get<boolean>(PICKER_OPENED_KEY) === true) {
 		const version = context.workspaceState.get<string>(VERSION_STATE_KEY) ?? '';
 		const extra = version
-			? `NodeSwitcher · Node ${version}${suffix} · ${host_platform_label()}`
-			: `NodeSwitcher${suffix} · ${host_platform_label()}`;
+			? `Node ${version}${suffix} · ${host_platform_label()}`
+			: tag
+				? `${tag} · ${host_platform_label()}`
+				: host_platform_label();
 		status_item.tooltip = `${mismatch_block}\n\n${extra}`;
 		return;
 	}
@@ -231,8 +285,8 @@ export function apply_nodeswitcher_status_bar_style(
 		status_item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
 		return;
 	}
-	status_item.backgroundColor = undefined;
-	status_item.color = undefined;
+	status_item.color = STATUS_BAR_FOREGROUND;
+	status_item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
 }
 
 export function apply_nodeswitcher_status_bar_visibility(status_item: vscode.StatusBarItem): void {
@@ -279,6 +333,9 @@ function format_status_bar_text(
 	const base = `$(${leading_icon}) Node ${current}${label_suffix}`;
 	if (project_pin && normalize_version(current) !== normalize_version(project_pin)) {
 		return `${base} \u2260 ${project_pin}`;
+	}
+	if (project_pin) {
+		return `${base} \u{1F7E2}`;
 	}
 	return base;
 }
@@ -455,11 +512,18 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 	const select_promise = new Promise<VersionEntry | undefined>((resolve) => {
 		const disposables: vscode.Disposable[] = [];
 		let picker_closed = false;
+		let active_install_abort: AbortController | undefined;
 		const finish = (value: VersionEntry | undefined) => {
 			if (picker_closed) {
 				return;
 			}
+			const had_pending_install = active_install_abort !== undefined;
+			active_install_abort?.abort();
+			active_install_abort = undefined;
 			picker_closed = true;
+			if (had_pending_install && value === undefined) {
+				vscode.window.showInformationMessage('Install cancelled.');
+			}
 			for (const disposable of disposables) {
 				disposable.dispose();
 			}
@@ -474,9 +538,24 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 			}
 			const b = backend;
 			const show_progress = !entry.is_installed;
+			let cancel_btn_dispose: vscode.Disposable | undefined;
+			const cancel_btn: vscode.QuickInputButton = {
+				iconPath: new vscode.ThemeIcon('close'),
+				tooltip: 'Cancel download / install'
+			};
+			let install_signal: AbortSignal | undefined;
 			if (show_progress) {
+				const ac = new AbortController();
+				install_signal = ac.signal;
+				active_install_abort = ac;
 				quick_pick.busy = true;
 				quick_pick.enabled = false;
+				quick_pick.buttons = [cancel_btn];
+				cancel_btn_dispose = quick_pick.onDidTriggerButton((btn) => {
+					if (btn === cancel_btn || btn.tooltip === cancel_btn.tooltip) {
+						ac.abort();
+					}
+				});
 			}
 			const on_phase: InstallPhaseCallback = (phase, version) => {
 				const vv = node_version_display_v(version);
@@ -484,10 +563,32 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 				quick_pick.placeholder = `${verb} ${vv}...`;
 				quick_pick.title = `${verb} Node ${version}`;
 			};
-			if (show_progress) {
-				on_phase('downloading', entry.version);
+			try {
+				if (show_progress) {
+					on_phase('downloading', entry.version);
+				}
+				await apply_picked_version_entry(
+					context,
+					status_item,
+					b,
+					entry,
+					show_progress ? on_phase : undefined,
+					install_signal
+				);
+			} finally {
+				cancel_btn_dispose?.dispose();
+				active_install_abort = undefined;
+				if (!picker_closed && show_progress) {
+					quick_pick.buttons = [];
+					quick_pick.busy = false;
+					quick_pick.enabled = true;
+					quick_pick.title = undefined;
+					const hint = visible_backend_label(b);
+					quick_pick.placeholder = hint
+						? `Select a Node version · ${hint} · ${host_platform_label()}`
+						: `Select a Node version · ${host_platform_label()}`;
+				}
 			}
-			await apply_picked_version_entry(context, status_item, b, entry, show_progress ? on_phase : undefined);
 		};
 
 		disposables.push(
@@ -522,8 +623,8 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 					}
 					return;
 				}
-				if (selected.action === 'open_settings') {
-					await vscode.commands.executeCommand('nodeswitcher.openExtensionSettings');
+				if (selected.action === 'open_sidebar') {
+					await vscode.commands.executeCommand(OPEN_SIDEBAR_COMMAND_ID);
 					finish(undefined);
 					return;
 				}
@@ -533,7 +634,13 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 				try {
 					await apply_entry_from_picker(selected.entry);
 					finish(selected.entry);
-				} catch {
+				} catch (err) {
+					if (err instanceof InstallCancelledError) {
+						if (!picker_closed) {
+							vscode.window.showInformationMessage('Install cancelled.');
+						}
+						return;
+					}
 					finish(undefined);
 				}
 			}),
@@ -645,13 +752,8 @@ function entry_for_project_pin(entries: VersionEntry[], pin: string): VersionEnt
 	return find_entry_for_version(entries, pin) ?? { version: pin, is_installed: false, is_current: false };
 }
 
-function quick_pick_bubble_uri(
-	extension_path: string,
-	version: string,
-	role: 'current' | 'installed' | 'available'
-): vscode.Uri {
-	const file =
-		role === 'current' ? 'bubble-current.svg' : `bubble-${version_major_color_key(version)}.svg`;
+function quick_pick_version_row_icon_uri(extension_path: string, version: string): vscode.Uri {
+	const file = resolve_version_logo_filename(version, get_node_release_channels());
 	return vscode.Uri.file(path.join(extension_path, 'media', 'picker', file));
 }
 
@@ -704,19 +806,21 @@ export function build_version_picker_items(
 		`Node ${entry.version}: ${details}. ${group_tag}.`;
 
 	const build_item = (entry: VersionEntry, role: 'current' | 'installed' | 'available') => {
-		const details = role === 'current' ? 'In use now' : role === 'installed' ? 'Installed locally' : 'Available to install';
+		const detailsBase =
+			role === 'current' ? 'In use now' : role === 'installed' ? 'Installed locally' : 'Available to install';
+		const { badge } = resolve_version_release_semantics(entry.version, get_node_release_channels());
+		const details = badge ? `${detailsBase} · ${badge}` : detailsBase;
 		const gt = group_tag_for(role);
 		const tooltip = entry.is_installed
 			? build_installed_picker_tooltip(entry, backend, role)
 			: row_hover_text(entry, details, gt);
 		const version_cell = format_version_cell(entry.version, version_width);
-		const label =
-			role === 'current' ? `${version_cell} $(check) In use` : version_cell;
+		const label = role === 'current' ? `${version_cell} In use` : version_cell;
 		return {
 			label,
 			description: format_concise_row_description(details, gt, role),
 			tooltip,
-			iconPath: quick_pick_bubble_uri(extension_path, entry.version, role),
+			iconPath: quick_pick_version_row_icon_uri(extension_path, entry.version),
 			entry
 		};
 	};
@@ -749,7 +853,7 @@ export function build_version_picker_items(
 		quick_pick_items.push(section_break());
 		quick_pick_items.push(...available_entries.map((entry) => build_item(entry, 'available')));
 	}
-	const footer_label_width = Math.max('Show uninstalled'.length, 'Extension settings'.length);
+	const footer_label_width = Math.max('Show uninstalled'.length, 'Open settings'.length);
 	const pad_footer_label = (text: string): string =>
 		text + '\u2007'.repeat(footer_label_width - text.length);
 
@@ -777,13 +881,13 @@ export function build_version_picker_items(
 			action: 'load_available'
 		});
 	}
-	const open_settings_desc = format_concise_row_description('VS Code settings', 'Settings', 'available');
+	const open_sidebar_desc = format_concise_row_description('NodeSwitcher sidebar', 'Sidebar', 'available');
 	quick_pick_items.push(section_break());
 	quick_pick_items.push({
-		label: pad_footer_label('Extension settings'),
-		description: pad_description_center_in_zone(open_settings_desc),
-		tooltip: 'Open NodeSwitcher settings (backend preference, status bar visibility, …).',
-		action: 'open_settings'
+		label: pad_footer_label('Open settings'),
+		description: pad_description_center_in_zone(open_sidebar_desc),
+		tooltip: 'Opens the NodeSwitcher activity bar view (not VS Code settings). Use the command palette for NodeSwitcher: Open Settings.',
+		action: 'open_sidebar'
 	});
 	return quick_pick_items;
 }
@@ -810,9 +914,10 @@ export async function apply_picked_version_entry(
 	status_item: vscode.StatusBarItem,
 	backend: NodeBackend,
 	entry: VersionEntry,
-	on_install_phase?: InstallPhaseCallback
+	on_install_phase?: InstallPhaseCallback,
+	cancel_signal?: AbortSignal
 ): Promise<void> {
-	await select_version_internal(context, status_item, backend, entry, on_install_phase);
+	await select_version_internal(context, status_item, backend, entry, on_install_phase, cancel_signal);
 }
 
 async function select_version_internal(
@@ -820,28 +925,29 @@ async function select_version_internal(
 	status_item: vscode.StatusBarItem,
 	backend: NodeBackend,
 	entry: VersionEntry,
-	on_install_phase?: InstallPhaseCallback
+	on_install_phase?: InstallPhaseCallback,
+	cancel_signal?: AbortSignal
 ): Promise<void> {
 	try {
 		if (backend === 'nvm') {
 			if (!entry.is_installed) {
 				on_install_phase?.('downloading', entry.version);
-				await run_nvm(`install ${entry.version}`);
+				await run_nvm(`install ${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
 				on_install_phase?.('installing', entry.version);
-				await run_nvm(`use ${entry.version}`);
+				await run_nvm(`use ${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
 			} else {
-				await run_nvm(`use ${entry.version}`);
+				await run_nvm(`use ${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
 			}
 		} else if (!entry.is_installed) {
 			on_install_phase?.('downloading', entry.version);
-			await run_n(`${entry.version}`);
+			await run_n(`${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
 			on_install_phase?.('installing', entry.version);
 		} else {
-			await run_n(`${entry.version}`);
+			await run_n(`${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
 		}
 		await apply_node_environment(context, entry.version, backend, true);
-		await refresh_status_bar(context, status_item, true);
 		await persist_project_selection(context, entry.version, backend);
+		await refresh_status_bar(context, status_item, true);
 		const shown = visible_backend_label(backend);
 		vscode.window.showInformationMessage(
 			shown
@@ -849,6 +955,9 @@ async function select_version_internal(
 				: `NodeSwitcher set Node ${entry.version} for new integrated terminals (PATH). Open a new terminal if one is already open.`
 		);
 	} catch (error) {
+		if (error instanceof InstallCancelledError) {
+			throw error;
+		}
 		const message = error instanceof Error ? error.message : String(error);
 		vscode.window.showErrorMessage(`NodeSwitcher failed: ${message}`);
 		throw error;
@@ -1220,7 +1329,7 @@ async function check_and_prompt_nvm_windows(context: vscode.ExtensionContext): P
 		return;
 	}
 	const selection = await vscode.window.showInformationMessage(
-		'NodeSwitcher: the Windows Node version manager was not found on PATH. Install nvm-windows from the releases page.',
+		'NodeSwitcher: nvm-windows was not found on PATH. On Windows, NodeSwitcher uses nvm-windows only (not nvm-sh). Install it, then reload the window.',
 		"Don't ask again",
 		'Copy releases URL',
 		'Open releases'
@@ -1239,6 +1348,8 @@ async function check_and_prompt_nvm_windows(context: vscode.ExtensionContext): P
 	}
 }
 
+type NMacInstallPick = vscode.QuickPickItem & { value: 'npm' | 'brew' | 'docs' | 'dismiss' };
+
 async function check_and_prompt_n_macos(context: vscode.ExtensionContext): Promise<void> {
 	if (context.globalState.get<boolean>(N_MACOS_PROMPT_DISMISSED_KEY) === true) {
 		return;
@@ -1246,22 +1357,52 @@ async function check_and_prompt_n_macos(context: vscode.ExtensionContext): Promi
 	if (await probe_n(FAST_SHELL_TIMEOUT_MS)) {
 		return;
 	}
-	const selection = await vscode.window.showInformationMessage(
-		'NodeSwitcher: `n` is not installed. On macOS, NodeSwitcher uses n to switch Node versions.',
-		"Don't ask again",
-		'Copy install command',
-		'Open docs'
+	const pick = await vscode.window.showQuickPick<NMacInstallPick>(
+		[
+			{
+				label: '$(terminal) Copy npm install (global)',
+				description: N_PM_GLOBAL_INSTALL,
+				value: 'npm'
+			},
+			{
+				label: '$(package) Copy Homebrew install',
+				description: N_BREW_INSTALL,
+				value: 'brew'
+			},
+			{
+				label: '$(link-external) Open n (tj/n) on GitHub',
+				description: N_MACOS_DOC_URL,
+				value: 'docs'
+			},
+			{ label: "Don't ask again", description: 'Hide this until you reset global state', value: 'dismiss' }
+		],
+		{
+			title: 'NodeSwitcher: install n (macOS)',
+			placeHolder: 'On macOS, NodeSwitcher uses the npm package `n`. It was not found on PATH.'
+		}
 	);
-	if (selection === "Don't ask again") {
+	if (!pick) {
+		return;
+	}
+	if (pick.value === 'dismiss') {
 		await context.globalState.update(N_MACOS_PROMPT_DISMISSED_KEY, true);
 		return;
 	}
-	if (selection === 'Copy install command') {
-		await vscode.env.clipboard.writeText('brew install n');
-		vscode.window.showInformationMessage('Copied `brew install n`. Run it in a terminal, then reload the window.');
+	if (pick.value === 'npm') {
+		await vscode.env.clipboard.writeText(N_PM_GLOBAL_INSTALL);
+		vscode.window.showInformationMessage(
+			`Copied \`${N_PM_GLOBAL_INSTALL}\`. Run in a terminal, then reload the window so NodeSwitcher can find n.`
+		);
 		return;
 	}
-	if (selection === 'Open docs') {
+	if (pick.value === 'brew') {
+		await vscode.env.clipboard.writeText(N_BREW_INSTALL);
+		vscode.window.showInformationMessage(
+			`Copied \`${N_BREW_INSTALL}\`. Run in a terminal, then reload the window so NodeSwitcher can find n.`
+		);
+		return;
+	}
+	if (pick.value === 'docs') {
 		await vscode.env.openExternal(vscode.Uri.parse(N_MACOS_DOC_URL));
 	}
 }
@@ -1631,10 +1772,15 @@ async function paint_main_status_bar(
 				pin
 			);
 			apply_nodeswitcher_status_bar_style(status_item, 'project_mismatch');
-		} else if (looks_like_js && !declared_spec) {
+		} else if (
+			looks_like_js &&
+			!declared_spec &&
+			ws &&
+			!(await project_nodeswitcher_file_exists(ws))
+		) {
 			const label_suffix = tag ? ` (${tag})` : '';
 			status_item.text = `$(warning) Specify Node for project${label_suffix}`;
-			status_item.tooltip = `No engines.node in package.json and no .nvmrc / .node-version (optional: node-version= in .npmrc at project root). Active: ${active_version}.`;
+			status_item.tooltip = `No .nodeswitcher file and no engines.node / .nvmrc / .node-version (optional: node-version= in .npmrc at project root). Active: ${active_version}.`;
 			apply_nodeswitcher_status_bar_style(status_item, 'project_no_node_spec');
 		} else {
 			const lead = status_bar_leading_icon(pin, active_version);
@@ -1739,31 +1885,37 @@ async function run_nvm_with_fallback(commands: string[], timeout_ms: number): Pr
 	throw last_error instanceof Error ? last_error : new Error('nvm command failed');
 }
 
-async function run_nvm(args: string, timeout_ms = DEFAULT_SHELL_TIMEOUT_MS): Promise<string> {
+async function run_nvm(
+	args: string,
+	timeout_ms = DEFAULT_SHELL_TIMEOUT_MS,
+	signal?: AbortSignal
+): Promise<string> {
 	const command = `nvm ${args}`;
 	if (process.platform === 'win32') {
-		const { stdout, stderr } = await exec_async(`powershell -NoProfile -Command "${command}"`, {
-			timeout: timeout_ms
-		});
+		const ps = `powershell -NoProfile -Command "${command}"`;
+		const { stdout, stderr } = signal
+			? await exec_async_cancellable(ps, { timeout: timeout_ms, signal })
+			: await exec_async(ps, { timeout: timeout_ms });
 		return `${stdout}\n${stderr}`;
 	}
 	const shell = process.env.SHELL ?? '/bin/bash';
 	const escaped = command.replace(/"/g, '\\"');
-	const { stdout, stderr } = await exec_async(`${shell} -lc "${escaped}"`, {
-		timeout: timeout_ms
-	});
+	const sh = `${shell} -lc "${escaped}"`;
+	const { stdout, stderr } = signal
+		? await exec_async_cancellable(sh, { timeout: timeout_ms, signal })
+		: await exec_async(sh, { timeout: timeout_ms });
 	return `${stdout}\n${stderr}`;
 }
 
-async function run_n(args: string, timeout_ms = DEFAULT_SHELL_TIMEOUT_MS): Promise<string> {
+async function run_n(args: string, timeout_ms = DEFAULT_SHELL_TIMEOUT_MS, signal?: AbortSignal): Promise<string> {
 	if (process.platform === 'win32') {
 		throw new Error('n is not supported on Windows');
 	}
 	const shell = process.env.SHELL ?? '/bin/bash';
 	const cmd = `n ${args}`.trim();
-	const { stdout, stderr } = await exec_async(`${shell} -lc ${JSON.stringify(cmd)}`, {
-		timeout: timeout_ms,
-		env: process.env
-	});
+	const full = `${shell} -lc ${JSON.stringify(cmd)}`;
+	const { stdout, stderr } = signal
+		? await exec_async_cancellable(full, { timeout: timeout_ms, env: process.env, signal })
+		: await exec_async(full, { timeout: timeout_ms, env: process.env });
 	return `${stdout}\n${stderr}`;
 }

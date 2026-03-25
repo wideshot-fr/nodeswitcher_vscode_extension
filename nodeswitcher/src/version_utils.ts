@@ -53,3 +53,73 @@ const CHARTS_THEME_COLOR: Record<VersionMajorColorKey, string> = {
 export function get_version_color(version: string): string {
 	return CHARTS_THEME_COLOR[version_major_color_key(version)];
 }
+
+const DEPRECATED_MAJOR_MAX = 17;
+
+export type NodeReleaseChannels = {
+	current_major: number | null;
+	active_lts_major: number | null;
+	maintenance_lts_majors: Set<number>;
+	has_index: boolean;
+};
+
+export type VersionReleaseSemantics = {
+	logoFilename: string;
+	badge: string;
+};
+
+function logo_filename_for_major_fallback(version: string): string {
+	const band = version_major_color_key(version);
+	if (band === 'green') {
+		return 'logo-current.svg';
+	}
+	if (band === 'blue') {
+		return 'logo-lts.svg';
+	}
+	return 'logo-eol.svg';
+}
+
+function badge_for_major_fallback(version: string): string {
+	const band = version_major_color_key(version);
+	if (band === 'green') {
+		return 'Current';
+	}
+	if (band === 'blue') {
+		return 'LTS';
+	}
+	return 'EOL';
+}
+
+export function resolve_version_release_semantics(
+	version: string,
+	channels: NodeReleaseChannels
+): VersionReleaseSemantics {
+	const normalized = normalize_version(version.trim());
+	const major = Number(normalized.split('.')[0]);
+	if (Number.isNaN(major)) {
+		return { logoFilename: 'logo-eol.svg', badge: 'EOL' };
+	}
+	if (major <= DEPRECATED_MAJOR_MAX) {
+		return { logoFilename: 'logo-eol.svg', badge: 'EOL' };
+	}
+	if (channels.has_index) {
+		if (channels.current_major !== null && major === channels.current_major) {
+			return { logoFilename: 'logo-current.svg', badge: 'Current' };
+		}
+		if (channels.active_lts_major !== null && major === channels.active_lts_major) {
+			return { logoFilename: 'logo-lts.svg', badge: 'LTS' };
+		}
+		if (channels.maintenance_lts_majors.has(major)) {
+			return { logoFilename: 'logo-maintenance.svg', badge: 'Maintenance' };
+		}
+		return { logoFilename: 'logo-eol.svg', badge: 'EOL' };
+	}
+	return {
+		logoFilename: logo_filename_for_major_fallback(version),
+		badge: badge_for_major_fallback(version)
+	};
+}
+
+export function resolve_version_logo_filename(version: string, channels: NodeReleaseChannels): string {
+	return resolve_version_release_semantics(version, channels).logoFilename;
+}

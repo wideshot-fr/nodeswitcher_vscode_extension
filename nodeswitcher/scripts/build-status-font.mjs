@@ -7,12 +7,21 @@ import svg2ttf from 'svg2ttf';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
-const svgPath = path.join(root, 'media', 'logo.svg');
+const glyphs = [
+	{
+		name: 'nodeswitcher-logo',
+		svgPath: path.join(root, 'media', 'logo.svg'),
+		codepoint: 0xea01
+	},
+	{
+		name: 'nodeswitcher-bubble-green',
+		svgPath: path.join(root, 'media', 'picker', 'bubble-green.svg'),
+		codepoint: 0xea02
+	}
+];
 const outDir = path.join(root, 'media', 'status-font');
 const outSvg = path.join(outDir, 'nodeswitcher-status.svg');
 const outTtf = path.join(outDir, 'nodeswitcher-status.ttf');
-
-const CODEPOINT = 0xea01;
 
 fs.mkdirSync(outDir, { recursive: true });
 
@@ -34,14 +43,16 @@ outStream.on('finish', () => {
 	fs.writeFileSync(outTtf, Buffer.from(ttf.buffer));
 	fs.unlinkSync(outSvg);
 	console.log(
-		`Wrote ${path.relative(root, outTtf)} — set fontCharacter to \\\\${CODEPOINT.toString(16)} (U+${CODEPOINT.toString(16).toUpperCase()})`
+		`Wrote ${path.relative(root, outTtf)} with ${glyphs.length} glyphs`
 	);
 });
 
-const glyph = createReadStream(svgPath);
-glyph.metadata = {
-	name: 'nodeswitcher-logo',
-	unicode: [String.fromCodePoint(CODEPOINT)]
-};
-fontStream.write(glyph);
+for (const glyphDef of glyphs) {
+	const glyph = createReadStream(glyphDef.svgPath);
+	glyph.metadata = {
+		name: glyphDef.name,
+		unicode: [String.fromCodePoint(glyphDef.codepoint)]
+	};
+	fontStream.write(glyph);
+}
 fontStream.end();

@@ -1,5 +1,7 @@
 import * as https from 'https';
-import { compare_versions_desc, normalize_version } from './version_utils';
+import { compare_versions_desc, normalize_version, type NodeReleaseChannels } from './version_utils';
+
+export type { NodeReleaseChannels } from './version_utils';
 
 const INDEX_URL = 'https://nodejs.org/dist/index.json';
 const CACHE_MS = 6 * 60 * 60 * 1000;
@@ -14,9 +16,34 @@ type IndexCache = {
 	expiry_ms: number;
 	lts_majors: Set<number>;
 	latest_stable_by_major: Map<number, string>;
+	current_major: number | null;
+	active_lts_major: number | null;
+	maintenance_lts_majors: Set<number>;
 };
 
 let cache: IndexCache | null = null;
+
+export function get_lts_majors_or_empty(): Set<number> {
+	return cache?.lts_majors ?? new Set();
+}
+
+export function get_node_release_channels(): NodeReleaseChannels {
+	const c = cache;
+	if (!c || c.latest_stable_by_major.size === 0) {
+		return {
+			current_major: null,
+			active_lts_major: null,
+			maintenance_lts_majors: new Set(),
+			has_index: false
+		};
+	}
+	return {
+		current_major: c.current_major,
+		active_lts_major: c.active_lts_major,
+		maintenance_lts_majors: new Set(c.maintenance_lts_majors),
+		has_index: true
+	};
+}
 
 function is_official_stable_release(version_field: string): boolean {
 	return /^v\d+\.\d+\.\d+$/.test(version_field);
@@ -52,19 +79,27 @@ async function ensure_index_cache(): Promise<IndexCache> {
 		const empty: IndexCache = {
 			expiry_ms: Date.now() + PLACEHOLDER_CACHE_MS,
 			lts_majors: new Set(),
-			latest_stable_by_major: new Map()
+			latest_stable_by_major: new Map(),
+			current_major: null,
+			active_lts_major: null,
+			maintenance_lts_majors: new Set()
 		};
 		cache = empty;
 		return empty;
 	}
 }
 
+type PerMajorLatest = { version: string; is_lts_line: boolean };
+
 async function build_index_cache_from_network(): Promise<{
 	lts_majors: Set<number>;
 	latest_stable_by_major: Map<number, string>;
+	current_major: number | null;
+	active_lts_major: number | null;
+	maintenance_lts_majors: Set<number>;
 }> {
 	const rows = (await fetch_json(INDEX_URL)) as IndexRow[];
-	const lts_majors = new Set<number>();
+	const per_major = new Map<number, PerMajorLatest>();
 	const latest_stable_by_major = new Map<number, string>();
 
 	for (const row of rows) {
@@ -77,16 +112,41 @@ async function build_index_cache_from_network(): Promise<{
 			continue;
 		}
 		const lts = row.lts;
-		if (lts !== undefined && lts !== null && lts !== false) {
-			lts_majors.add(major);
-		}
-		const prev = latest_stable_by_major.get(major);
-		if (!prev || compare_versions_desc(prev, normalized) > 0) {
+		const is_lts_line = lts !== undefined && lts !== null && lts !== false;
+		const prev = per_major.get(major);
+		if (!prev || compare_versions_desc(prev.version, normalized) > 0) {
+			per_major.set(major, { version: normalized, is_lts_line });
 			latest_stable_by_major.set(major, normalized);
 		}
 	}
 
-	return { lts_majors, latest_stable_by_major };
+	const lts_majors = new Set<number>();
+	const lts_majors_list: number[] = [];
+	for (const [major, info] of per_major) {
+		if (info.is_lts_line) {
+			lts_majors.add(major);
+			lts_majors_list.push(major);
+		}
+	}
+	lts_majors_list.sort((a, b) => b - a);
+	const active_lts_major = lts_majors_list.length > 0 ? lts_majors_list[0]! : null;
+	const maintenance_lts_majors = new Set(lts_majors_list.slice(1));
+
+	const non_lts_majors: number[] = [];
+	for (const [major, info] of per_major) {
+		if (!info.is_lts_line) {
+			non_lts_majors.push(major);
+		}
+	}
+	const current_major = non_lts_majors.length > 0 ? Math.max(...non_lts_majors) : null;
+
+	return {
+		lts_majors,
+		latest_stable_by_major,
+		current_major,
+		active_lts_major,
+		maintenance_lts_majors
+	};
 }
 
 function fetch_json(url: string): Promise<unknown> {

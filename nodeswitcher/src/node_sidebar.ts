@@ -5,7 +5,6 @@ import {
 	BACKEND_STATE_KEY,
 	build_version_picker_items,
 	get_project_pinned_from_disk,
-	get_version_color,
 	get_versions_with_available,
 	InstallPhase,
 	load_switcher_picker_entries,
@@ -18,7 +17,8 @@ import {
 	VersionEntry
 } from './node_backends';
 import { show_version_install_details } from './sidebar_version_details';
-import { normalize_version } from './version_utils';
+import { get_node_release_channels } from './node_release_index';
+import { normalize_version, resolve_version_logo_filename } from './version_utils';
 
 function strip_footer_quickpick_padding(text: string): string {
 	return text.replace(/\u2007/g, '');
@@ -38,7 +38,7 @@ export type SidebarElement =
 			tooltip?: string;
 	  }
 	| { kind: 'load_available'; backend: NodeBackend; label: string; description?: string; tooltip?: string }
-	| { kind: 'open_settings'; label: string; description?: string; tooltip?: string }
+	| { kind: 'open_sidebar'; label: string; description?: string; tooltip?: string }
 	| {
 			kind: 'switch_to_project';
 			backend: NodeBackend;
@@ -140,7 +140,7 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 		}
 		const version = this.context.workspaceState.get<string>(VERSION_STATE_KEY);
 		const backend = this.context.workspaceState.get<NodeBackend>(BACKEND_STATE_KEY);
-		this.view.title = 'NodeSwitcher';
+		this.view.title = 'NODESWITCHER';
 		if (version && backend) {
 			const trimmed = version.trim();
 			this.view.description = /^v/i.test(trimmed) ? trimmed : `v${trimmed}`;
@@ -198,13 +198,10 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 					item.contextValue = undefined;
 					return item;
 				}
-				const color =
-					element.role === 'current'
-						? new vscode.ThemeColor('testing.iconPassed')
-						: new vscode.ThemeColor(get_version_color(element.entry.version));
-				const icon_id =
-					element.role === 'current' ? 'check' : element.role === 'installed' ? 'circle-filled' : 'cloud-download';
-				item.iconPath = new vscode.ThemeIcon(icon_id, color);
+				const logo_file = resolve_version_logo_filename(element.entry.version, get_node_release_channels());
+				item.iconPath = vscode.Uri.file(
+					path.join(this.context.extensionPath, 'media', 'picker', logo_file)
+				);
 				item.contextValue =
 					element.role === 'current'
 						? 'nodeswitcher.version.current'
@@ -230,14 +227,14 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 				};
 				return item;
 			}
-			case 'open_settings': {
+			case 'open_sidebar': {
 				const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
 				item.description = element.description;
 				item.tooltip = element.tooltip;
 				item.iconPath = new vscode.ThemeIcon('settings-gear');
 				item.command = {
-					command: 'nodeswitcher.openExtensionSettings',
-					title: 'NodeSwitcher: Open Settings'
+					command: OPEN_SIDEBAR_COMMAND_ID,
+					title: 'Open NodeSwitcher sidebar'
 				};
 				return item;
 			}
@@ -368,9 +365,9 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 				});
 				continue;
 			}
-			if (it.action === 'open_settings') {
+			if (it.action === 'open_sidebar') {
 				rows.push({
-					kind: 'open_settings',
+					kind: 'open_sidebar',
 					label: strip_footer_quickpick_padding(it.label),
 					description:
 						it.description !== undefined ? strip_footer_quickpick_padding(it.description) : undefined,
