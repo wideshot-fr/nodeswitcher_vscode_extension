@@ -1,6 +1,24 @@
+import semver from 'semver';
+
 export function parse_versions(raw: string): string[] {
 	const matches = raw.match(/\bv?\d+\.\d+\.\d+\b/g) ?? [];
 	return [...new Set(matches.map(normalize_version))];
+}
+
+export function collect_stable_semver_versions_from_text(raw: string): string[] {
+	const matches = raw.match(/\bv?\d+\.\d+\.\d+\b/g) ?? [];
+	const set = new Set<string>();
+	for (const m of matches) {
+		const n = normalize_version(m);
+		if (semver.valid(n) && semver.prerelease(n) === null) {
+			set.add(n);
+		}
+	}
+	return [...set];
+}
+
+export function sort_versions_semver_desc(versions: string[]): string[] {
+	return [...versions].filter((v) => semver.valid(v)).sort((a, b) => semver.rcompare(a, b));
 }
 
 export function normalize_version(version: string): string {
@@ -60,6 +78,7 @@ export type NodeReleaseChannels = {
 	current_major: number | null;
 	active_lts_major: number | null;
 	maintenance_lts_majors: Set<number>;
+	status_by_major?: Map<number, 'current' | 'active_lts' | 'maintenance_lts' | 'eol'>;
 	has_index: boolean;
 };
 
@@ -80,14 +99,7 @@ function logo_filename_for_major_fallback(version: string): string {
 }
 
 function badge_for_major_fallback(version: string): string {
-	const band = version_major_color_key(version);
-	if (band === 'green') {
-		return 'Current';
-	}
-	if (band === 'blue') {
-		return 'LTS';
-	}
-	return 'EOL';
+	return '';
 }
 
 export function resolve_version_release_semantics(
@@ -103,16 +115,20 @@ export function resolve_version_release_semantics(
 		return { logoFilename: 'logo-eol.svg', badge: 'EOL' };
 	}
 	if (channels.has_index) {
-		if (channels.current_major !== null && major === channels.current_major) {
+		const mapped = channels.status_by_major?.get(major);
+		if (mapped === 'current') {
 			return { logoFilename: 'logo-current.svg', badge: 'Current' };
 		}
-		if (channels.active_lts_major !== null && major === channels.active_lts_major) {
-			return { logoFilename: 'logo-lts.svg', badge: 'LTS' };
+		if (mapped === 'active_lts') {
+			return { logoFilename: 'logo-lts.svg', badge: 'Active LTS' };
 		}
-		if (channels.maintenance_lts_majors.has(major)) {
-			return { logoFilename: 'logo-maintenance.svg', badge: 'Maintenance' };
+		if (mapped === 'maintenance_lts') {
+			return { logoFilename: 'logo-maintenance.svg', badge: 'Maintenance LTS' };
 		}
-		return { logoFilename: 'logo-eol.svg', badge: 'EOL' };
+		if (mapped === 'eol') {
+			return { logoFilename: 'logo-eol.svg', badge: 'EOL' };
+		}
+		return { logoFilename: logo_filename_for_major_fallback(version), badge: '' };
 	}
 	return {
 		logoFilename: logo_filename_for_major_fallback(version),

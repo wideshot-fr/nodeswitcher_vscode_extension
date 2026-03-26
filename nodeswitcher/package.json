@@ -53,6 +53,13 @@
           "minimum": -10000,
           "maximum": 10000,
           "description": "Status bar item priority (higher appears further left among left-aligned items). Reload the window after changing."
+        },
+        "nodeswitcher.maxOtherAvailableVersions": {
+          "type": "number",
+          "default": 200,
+          "minimum": 10,
+          "maximum": 2000,
+          "description": "Maximum number of rows in “Other available versions” (newest first). Higher values may slow the picker."
         }
       }
     },
@@ -83,7 +90,7 @@
       },
       {
         "command": "nodeswitcher.sidebarToggleAvailable",
-        "title": "NodeSwitcher: Toggle Uninstalled Node Versions (Sidebar)"
+        "title": "NodeSwitcher: Toggle Other Available Node Versions (Sidebar)"
       },
       {
         "command": "nodeswitcher.openSidebar",
@@ -139,6 +146,26 @@
         }
       ]
     },
+    "colors": [
+      {
+        "id": "nodeswitcher.statusBarMatchBackground",
+        "description": "Status bar background when the active Node version matches the project (.nodeswitcher pin or satisfied declaration).",
+        "defaults": {
+          "dark": "#2e7d32",
+          "light": "#a5d6a7",
+          "highContrast": "#008000"
+        }
+      },
+      {
+        "id": "nodeswitcher.statusBarMatchForeground",
+        "description": "Status bar text/icon color when the active Node version matches the project.",
+        "defaults": {
+          "dark": "#ffffff",
+          "light": "#1b5e20",
+          "highContrast": "#ffffff"
+        }
+      }
+    ],
     "icons": {
       "nodeswitcher-logo": {
         "description": "NodeSwitcher logo (from media/logo.svg) for status bar",

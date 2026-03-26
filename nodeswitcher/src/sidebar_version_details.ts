@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { report_nodeswitcher_failure } from './error_panel';
 import {
 	list_candidate_install_roots,
 	node_version_display_v,
@@ -63,7 +64,11 @@ export async function show_version_install_details(
 		if (folder) {
 			await vscode.env.clipboard.writeText(folder);
 		} else {
-			vscode.window.showWarningMessage('No install folder resolved.');
+			report_nodeswitcher_failure(
+				context,
+				'No install folder to copy.',
+				'Could not resolve an install directory for this version on this machine.'
+			);
 		}
 		return;
 	}
@@ -82,8 +87,7 @@ export async function show_version_install_details(
 			await refresh_status_bar(context, status_item, true);
 			vscode.window.showInformationMessage(`Node ${v} was uninstalled.`);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			vscode.window.showErrorMessage(`Uninstall failed: ${message}`);
+			report_nodeswitcher_failure(context, 'NodeSwitcher uninstall failed.', error);
 		}
 	}
 }

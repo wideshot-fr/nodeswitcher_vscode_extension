@@ -3,6 +3,7 @@ import {
 	apply_nodeswitcher_status_bar_style,
 	apply_nodeswitcher_status_bar_visibility,
 	check_and_prompt_required_runtime,
+	dispose_refresh_status_bar_debounce,
 	initialize_status,
 	open_version_picker,
 	refresh_status_bar,
@@ -21,8 +22,8 @@ export function activate(context: vscode.ExtensionContext): void {
 	const priority = vscode.workspace.getConfiguration('nodeswitcher').get<number>('statusBarPriority', 1000);
 	status_item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, priority);
 	status_item.command = undefined;
-	status_item.text = `$(sync~spin) $(${STATUS_BAR_ICON}) NodeSwitcher - Analyzing Node.js version`;
-	status_item.tooltip = 'NodeSwitcher is analyzing your current Node version...';
+	status_item.text = `$(sync~spin) $(${STATUS_BAR_ICON}) NodeSwitcher — scanning project…`;
+	status_item.tooltip = 'NodeSwitcher is scanning project Node declarations, then reading your active Node version…';
 	apply_nodeswitcher_status_bar_style(status_item);
 	apply_nodeswitcher_status_bar_visibility(status_item);
 	context.subscriptions.push(status_item);
@@ -93,4 +94,6 @@ export function activate(context: vscode.ExtensionContext): void {
 	})();
 }
 
-export function deactivate() {}
+export function deactivate(): void {
+	dispose_refresh_status_bar_debounce();
+}

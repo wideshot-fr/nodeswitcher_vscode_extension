@@ -5,24 +5,29 @@ import { homedir } from 'os';
 import * as path from 'path';
 import { promisify } from 'util';
 import * as vscode from 'vscode';
+import { report_nodeswitcher_failure, truncate_cli_output } from './error_panel';
 import {
+	ensure_node_release_channels_loaded,
 	get_latest_stable_per_major_sorted,
-	get_node_release_channels,
-	sort_versions_for_display
+	get_node_release_channels
 } from './node_release_index';
 import {
 	active_satisfies_declared_range,
+	declaration_scan_step_count,
+	declaration_scan_step_label,
 	read_declared_node_range,
 	workspace_looks_like_js_project
 } from './project_node_spec';
 import {
+	collect_stable_semver_versions_from_text,
 	compare_versions_desc,
 	get_version_color,
 	normalize_version,
 	parse_versions,
 	resolve_version_logo_filename,
 	resolve_version_release_semantics,
-	sanitize_version
+	sanitize_version,
+	sort_versions_semver_desc
 } from './version_utils';
 
 const exec_async = promisify(exec);
@@ -105,8 +110,6 @@ export type NodePickerItem = vscode.QuickPickItem & {
 export const BACKEND_STATE_KEY = 'nodeswitcher.backend';
 const BACKEND_PROBE_AT_KEY = 'nodeswitcher.backendProbeAt';
 const BACKEND_PROBE_VALUE_KEY = 'nodeswitcher.backendProbeValue';
-const LOCAL_VERSIONS_AT_KEY = 'nodeswitcher.localVersionsAt';
-const LOCAL_VERSIONS_KEY = 'nodeswitcher.localVersions';
 export const VERSION_STATE_KEY = 'nodeswitcher.activeNodeVersion';
 const LAST_APPLIED_VERSION_KEY = 'nodeswitcher.lastAppliedViaExtension';
 const PROJECT_PINNED_CACHE_KEY = 'nodeswitcher.projectPinnedVersionCache';
@@ -131,7 +134,26 @@ export const STATUS_BAR_FOREGROUND = '#ffffff';
 const VERSION_LABEL_MIN_CHARS = 18;
 const ACCORDION_ICON_PAD_RATIO = 0.22;
 
+const PICKER_LOGO_URI_CACHE_MAX = 120;
 const padded_picker_logo_uri_cache = new Map<string, vscode.Uri>();
+
+function trim_picker_logo_cache(): void {
+	while (padded_picker_logo_uri_cache.size > PICKER_LOGO_URI_CACHE_MAX) {
+		const first = padded_picker_logo_uri_cache.keys().next().value;
+		if (first === undefined) {
+			break;
+		}
+		padded_picker_logo_uri_cache.delete(first);
+	}
+}
+
+function get_max_other_available_versions(): number {
+	const n = vscode.workspace.getConfiguration('nodeswitcher').get<number>('maxOtherAvailableVersions', 200);
+	if (!Number.isFinite(n) || n < 10) {
+		return 200;
+	}
+	return Math.min(2000, Math.floor(n));
+}
 
 let after_status_paint: (() => void) | undefined;
 
@@ -273,12 +295,19 @@ export type NodeswitcherStatusBarVariant =
 	| 'default'
 	| 'global_drift'
 	| 'project_mismatch'
-	| 'project_no_node_spec';
+	| 'project_no_node_spec'
+	| 'project_match'
+	| 'probe_error';
 
 export function apply_nodeswitcher_status_bar_style(
 	status_item: vscode.StatusBarItem,
 	variant: NodeswitcherStatusBarVariant = 'default'
 ): void {
+	if (variant === 'probe_error') {
+		status_item.color = STATUS_BAR_FOREGROUND;
+		status_item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+		return;
+	}
 	if (variant === 'global_drift' || variant === 'project_mismatch') {
 		status_item.color = STATUS_BAR_FOREGROUND;
 		status_item.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
@@ -287,6 +316,11 @@ export function apply_nodeswitcher_status_bar_style(
 	if (variant === 'project_no_node_spec') {
 		status_item.color = STATUS_BAR_FOREGROUND;
 		status_item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+		return;
+	}
+	if (variant === 'project_match') {
+		status_item.color = new vscode.ThemeColor('nodeswitcher.statusBarMatchForeground');
+		status_item.backgroundColor = new vscode.ThemeColor('nodeswitcher.statusBarMatchBackground');
 		return;
 	}
 	status_item.color = STATUS_BAR_FOREGROUND;
@@ -419,10 +453,55 @@ export async function render_cached_status(
 }
 
 export async function initialize_status(context: vscode.ExtensionContext, status_item: vscode.StatusBarItem): Promise<void> {
-	status_item.text = status_bar_text(`$(sync~spin) $(${STATUS_BAR_ICON}) NodeSwitcher - Analyzing Node.js version`, 'loading');
-	status_item.tooltip = 'NodeSwitcher is analyzing your current Node version...';
+	status_item.text = status_bar_text(`$(sync~spin) $(${STATUS_BAR_ICON}) NodeSwitcher — scanning project…`, 'loading');
+	status_item.tooltip =
+		'NodeSwitcher is scanning project Node declarations (.nodeswitcher, package.json, project .npmrc, …)…';
 	apply_nodeswitcher_status_bar_style(status_item);
 	apply_nodeswitcher_status_bar_visibility(status_item);
+	const ws = get_workspace_folder_path();
+	const scan_lines: string[] = [];
+	const total = declaration_scan_step_count();
+	if (ws) {
+		try {
+			await read_declared_node_range(ws, {
+				onProgress: async (ev) => {
+					const label = declaration_scan_step_label(ev.step);
+					const line = ev.found
+						? `$(pass) ${label} — ${(ev.value ?? '').trim()}`
+						: `$(check) ${label} — not set`;
+					scan_lines.push(line);
+					const n = scan_lines.length;
+					const header = 'NodeSwitcher — project declaration (in order; stops at first match):';
+					status_item.tooltip = [header, ...scan_lines].join('\n');
+					if (ev.found) {
+						status_item.tooltip += `\n\nUsing declaration from ${label}.`;
+						status_item.text = status_bar_text(
+							`$(pass) $(${STATUS_BAR_ICON}) NodeSwitcher — ${label}`,
+							'loading'
+						);
+					} else {
+						status_item.text = status_bar_text(
+							`$(sync~spin) $(${STATUS_BAR_ICON}) NodeSwitcher — scan ${n}/${total}`,
+							'loading'
+						);
+					}
+				}
+			});
+			const found_decl = scan_lines.some((l) => l.startsWith('$(pass)'));
+			if (scan_lines.length > 0 && !found_decl) {
+				status_item.tooltip = [
+					'NodeSwitcher — project declaration (in order; stops at first match):',
+					...scan_lines,
+					'',
+					'No declaration found in any step; active Node comes from your version manager only.'
+				].join('\n');
+			}
+		} catch {
+			// ignore scan errors; read_declared_node_range is re-run when painting status
+		}
+	}
+
+	status_item.text = status_bar_text(`$(sync~spin) $(${STATUS_BAR_ICON}) NodeSwitcher — reading Node version…`, 'loading');
 	try {
 		const backend = await resolve_backend_cached(context, true);
 		const current = await get_current_version(backend, 5_000);
@@ -431,7 +510,6 @@ export async function initialize_status(context: vscode.ExtensionContext, status
 		await context.workspaceState.update(LAST_APPLIED_VERSION_KEY, current_n);
 		await context.workspaceState.update(BACKEND_STATE_KEY, backend);
 		await apply_project_selection_if_present(context, status_item);
-		void warm_local_versions_cache(context, backend);
 		await ensure_project_selection_prompt(context, status_item);
 	} catch {
 		void render_cached_status(context, status_item);
@@ -688,8 +766,11 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 							true
 						);
 					} catch (error) {
-						const message = error instanceof Error ? error.message : String(error);
-						vscode.window.showErrorMessage(`NodeSwitcher failed to load available versions: ${message}`);
+						report_nodeswitcher_failure(
+							context,
+							'NodeSwitcher failed to load other available Node versions.',
+							error
+						);
 					} finally {
 						quick_pick.busy = false;
 						quick_pick.enabled = true;
@@ -728,71 +809,112 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 						}
 						return;
 					}
-					finish(undefined);
-				}
-			}),
-			quick_pick.onDidHide(() => finish(undefined))
-		);
-		quick_pick.show();
-		void (async () => {
-			let b: NodeBackend;
-			try {
-				b = await resolve_backend_cached(context, false);
-			} catch {
-				if (!picker_closed) {
-					vscode.window.showErrorMessage(
-						`NodeSwitcher could not use the Node version manager for this OS (${host_platform_label()}). Install the required tool and reload the window.`
+					report_nodeswitcher_failure(
+						context,
+						'NodeSwitcher failed to apply the selected Node version.',
+						err
 					);
 					finish(undefined);
 				}
-				return;
-			}
-			if (picker_closed) {
-				return;
-			}
-			backend = b;
-			let raw_entries: VersionEntry[];
-			try {
-				raw_entries = (await get_cached_local_versions(context)) ?? (await get_local_versions(backend));
-			} catch {
-				if (!picker_closed) {
-					vscode.window.showErrorMessage('NodeSwitcher could not list installed Node versions.');
-					finish(undefined);
+			}),
+			quick_pick.onDidHide(() => {
+				if (active_install_abort !== undefined) {
+					return;
 				}
-				return;
-			}
-			if (picker_closed) {
-				return;
-			}
-			if (raw_entries.length === 0) {
-				vscode.window.showErrorMessage('NodeSwitcher could not list installed Node versions.');
 				finish(undefined);
-				return;
+			})
+		);
+		quick_pick.show();
+		void (async () => {
+			quick_pick.busy = true;
+			try {
+				let b: NodeBackend;
+				try {
+					b = await resolve_backend_cached(context, false);
+				} catch (e) {
+					if (!picker_closed) {
+						const text = `NodeSwitcher could not use the Node version manager for this OS (${host_platform_label()}). Install the required tool and reload the window.`;
+						report_nodeswitcher_failure(context, text, e);
+						finish(undefined);
+					}
+					return;
+				}
+				if (picker_closed) {
+					return;
+				}
+				backend = b;
+				let raw_entries: VersionEntry[];
+				let live: string;
+				let pin: string | undefined;
+				try {
+					[raw_entries, live, pin] = await Promise.all([
+						get_local_versions(b, { omitCurrentProbe: true }),
+						resolve_live_version_for_ui(context, b),
+						get_project_pinned_from_disk(),
+						ensure_node_release_channels_loaded()
+					]);
+				} catch (e) {
+					if (!picker_closed) {
+						report_nodeswitcher_failure(
+							context,
+							'NodeSwitcher could not list installed Node versions.',
+							e
+						);
+						finish(undefined);
+					}
+					return;
+				}
+				if (picker_closed) {
+					return;
+				}
+				if (raw_entries.length === 0) {
+					try {
+						const probe = await get_installed_versions_with_raw(b);
+						if (probe.versions.length === 0 && probe.raw.trim().length > 0) {
+							report_nodeswitcher_failure(
+								context,
+								'NodeSwitcher could not parse installed versions from your version manager.',
+								`Output (truncated):\n${truncate_cli_output(probe.raw, 4000)}`
+							);
+						} else {
+							report_nodeswitcher_failure(
+								context,
+								'NodeSwitcher could not list installed Node versions.',
+								'No installed versions were returned or parsed.'
+							);
+						}
+					} catch (probeErr) {
+						report_nodeswitcher_failure(
+							context,
+							'NodeSwitcher could not read installed Node versions.',
+							probeErr
+						);
+					}
+					finish(undefined);
+					return;
+				}
+				project_pin = pin;
+				current_entries = rehydrate_entries_current(raw_entries, live);
+				loaded = true;
+				const tool_hint = visible_backend_label(backend);
+				quick_pick.placeholder = tool_hint
+					? `Select a Node version · ${tool_hint} · ${host_platform_label()}`
+					: `Select a Node version · ${host_platform_label()}`;
+				quick_pick.items = build_version_picker_items(
+					current_entries,
+					backend,
+					include_available,
+					include_installed,
+					project_pin,
+					context.extensionPath,
+					false,
+					true
+				);
+			} finally {
+				if (!picker_closed) {
+					quick_pick.busy = false;
+				}
 			}
-			const live = await resolve_live_version_for_ui(context, backend);
-			if (picker_closed) {
-				return;
-			}
-			project_pin = await get_project_pinned_from_disk();
-			if (picker_closed) {
-				return;
-			}
-			current_entries = rehydrate_entries_current(raw_entries, live);
-			loaded = true;
-			const tool_hint = visible_backend_label(backend);
-			quick_pick.placeholder = tool_hint
-				? `Select a Node version · ${tool_hint} · ${host_platform_label()}`
-				: `Select a Node version · ${host_platform_label()}`;
-			quick_pick.items = build_version_picker_items(
-				current_entries,
-				backend,
-				include_available,
-				include_installed,
-				project_pin,
-				context.extensionPath,
-				false,
-				true
-			);
 		})();
 	});
 
@@ -879,6 +1001,7 @@ function quick_pick_version_row_icon_uri(
 	}
 	const uri = svg_data_uri_with_left_padding(extension_path, file);
 	padded_picker_logo_uri_cache.set(cacheKey, uri);
+	trim_picker_logo_cache();
 	return uri;
 }
 
@@ -888,24 +1011,20 @@ function quick_pick_project_switch_uri(extension_path: string): vscode.Uri {
 
 function picker_channel_kind_display(badge: string): string {
 	const t = badge.trim().replace(/\s+/g, ' ');
-	if (/^maintenance$/i.test(t)) {
-		return 'Maintenance LTS';
-	}
 	return t;
 }
 
 function picker_version_state_label(version: string, badge: string): string {
-	return `${version} (${picker_channel_kind_display(badge)})`;
+	const channel = picker_channel_kind_display(badge).trim();
+	return channel ? `${version} (${channel})` : version;
 }
 
-function pad_description_symmetric_in_zone(text: string, zoneWidth: number): string {
+function pad_icon_status_column_right(icon: string, columnCharWidth: number): string {
 	const pad = '\u2007';
-	if (text.length >= zoneWidth) {
-		return text;
+	if (icon.length >= columnCharWidth) {
+		return icon;
 	}
-	const gap = zoneWidth - text.length;
-	const lead = Math.floor(gap / 2);
-	return pad.repeat(lead) + text + pad.repeat(gap - lead);
+	return pad.repeat(columnCharWidth - icon.length) + icon;
 }
 
 export function build_version_picker_items(
@@ -931,15 +1050,15 @@ export function build_version_picker_items(
 		? Math.max(
 				max_version_state_label_width,
 				'Project Node version'.length,
-				'Hide installed'.length,
-				'Show installed'.length,
-				'Hide uninstalled'.length,
-				'Show uninstalled'.length,
+				'Hide installed local node.js versions'.length,
+				'Show installed local node.js versions'.length,
+				'Hide other available versions'.length,
+				'Show other available versions'.length,
 				'Open settings'.length
 			)
 		: version_width;
-	const status_desc_zone_width =
-		Math.max('$(check) Installed'.length, '$(cloud-download) Available'.length) + 4;
+	const status_icon_slot_chars = Math.max('$(vm-running)'.length, '$(cloud-download)'.length);
+	const status_desc_zone_width = status_icon_slot_chars + 10;
 	const current_entry = entries.find((entry) => entry.is_current && entry.is_installed);
 	const current_version_for_pin =
 		current_entry?.version ?? entries.find((entry) => entry.is_current)?.version ?? '';
@@ -953,7 +1072,7 @@ export function build_version_picker_items(
 	available_entries.sort((a, b) => compare_versions_desc(a.version, b.version));
 
 	const group_tag_for = (role: 'current' | 'installed' | 'available') =>
-		role === 'current' ? 'In Use' : role === 'installed' ? 'Installed' : 'Available To Install';
+		role === 'current' ? 'In Use' : role === 'installed' ? 'Local' : 'Other available versions';
 
 	const format_concise_row_description = (
 		middle: string,
@@ -967,10 +1086,11 @@ export function build_version_picker_items(
 			}
 			return middle;
 		}
+		const tail = middle ? `${middle} · ${group_tag}` : group_tag;
 		if (tool) {
-			return `${tool} | ${middle} · ${group_tag}`;
+			return `${tool} | ${tail}`;
 		}
-		return `${middle} · ${group_tag}`;
+		return tail;
 	};
 
 	const row_hover_text = (entry: VersionEntry, details: string, group_tag: string) =>
@@ -978,9 +1098,16 @@ export function build_version_picker_items(
 
 	const build_item = (entry: VersionEntry, role: 'current' | 'installed' | 'available') => {
 		const detailsBase =
-			role === 'current' ? 'In use now' : role === 'installed' ? 'Installed' : 'Available to install';
+			role === 'current' ? 'In use now' : role === 'installed' ? '' : 'Other available version';
 		const { badge } = resolve_version_release_semantics(entry.version, release_channels);
-		const details = badge ? `${detailsBase} · ${badge}` : detailsBase;
+		const badge_for_display = role === 'available' ? '' : badge;
+		const channel = badge_for_display ? picker_channel_kind_display(badge_for_display) : '';
+		const details =
+			role === 'installed'
+				? channel
+				: channel
+					? `${detailsBase} · ${channel}`
+					: detailsBase;
 		const gt = group_tag_for(role);
 		const tooltip = entry.is_installed
 			? build_installed_picker_tooltip(entry, backend, role)
@@ -995,18 +1122,17 @@ export function build_version_picker_items(
 		let description: string | undefined;
 		if (align_installed_state_in_description) {
 			label = format_version_cell(
-				picker_version_state_label(entry.version, badge),
+				picker_version_state_label(entry.version, badge_for_display),
 				picker_primary_label_width
 			);
-			description = pad_description_symmetric_in_zone(
-				role === 'available' ? '$(cloud-download) Available' : '$(check) Installed',
-				status_desc_zone_width
-			);
+			const status_icon =
+				role === 'available' ? '$(cloud-download)' : role === 'current' ? '$(vm-running)' : '';
+			description = pad_icon_status_column_right(status_icon, status_desc_zone_width);
 		} else if (role === 'current') {
 			label = `${version_cell} \u{1F7E2} In use`;
 			description = format_concise_row_description(details, gt, role);
 		} else if (role === 'installed') {
-			label = `${version_cell} $(check) Installed`;
+			label = version_cell;
 			description = format_concise_row_description(details, gt, role);
 		} else {
 			label = version_cell;
@@ -1052,10 +1178,10 @@ export function build_version_picker_items(
 		quick_pick_items.push(build_item(current_entry, 'current'));
 	}
 	const footer_label_width = Math.max(
-		'Show installed'.length,
-		'Hide installed'.length,
-		'Show uninstalled'.length,
-		'Hide uninstalled'.length,
+		'Show installed local node.js versions'.length,
+		'Hide installed local node.js versions'.length,
+		'Show other available versions'.length,
+		'Hide other available versions'.length,
 		'Open settings'.length
 	);
 	const pad_footer_label = (text: string): string =>
@@ -1080,14 +1206,19 @@ export function build_version_picker_items(
 
 	if (installed_entries.length > 0) {
 		quick_pick_items.push(section_break());
-		quick_pick_items.push({ kind: vscode.QuickPickItemKind.Separator, label: 'Installed' });
-		const toggle_installed_desc = include_installed
-			? format_concise_row_description('Collapse installed versions', group_tag_for('installed'), 'installed')
-			: format_concise_row_description('Expand installed versions', group_tag_for('installed'), 'installed');
+		quick_pick_items.push({ kind: vscode.QuickPickItemKind.Separator, label: 'Local' });
+		const toggle_installed_caption = include_installed
+			? 'Collapse installed versions'
+			: 'Expand installed versions';
+		const toggle_installed_desc = pad_description_center_in_zone(toggle_installed_caption);
 		quick_pick_items.push({
-			label: footer_primary(include_installed ? 'Hide installed' : 'Show installed'),
-			description: footer_secondary(toggle_installed_desc),
-			tooltip: include_installed ? 'Hides installed local Node versions.' : 'Shows installed local Node versions.',
+			label: footer_primary(
+				include_installed ? 'Hide installed local node.js versions' : 'Show installed local node.js versions'
+			),
+			description: toggle_installed_desc,
+			tooltip: include_installed
+				? 'Hides installed local Node.js versions listed below.'
+				: 'Shows installed local Node.js versions.',
 			iconPath: new vscode.ThemeIcon(include_installed ? 'chevron-up' : 'chevron-down'),
 			action: 'toggle_installed'
 		});
@@ -1098,15 +1229,18 @@ export function build_version_picker_items(
 	}
 
 	quick_pick_items.push(section_break());
-	const toggle_uninstalled_desc = include_available
-		? format_concise_row_description('Collapse remote versions', group_tag_for('installed'), 'installed')
-		: format_concise_row_description('Fetch remote versions', group_tag_for('available'), 'available');
+	const toggle_available_caption = include_available
+		? 'Collapse other available versions'
+		: 'Expand other available versions';
+	const toggle_available_desc = pad_description_center_in_zone(toggle_available_caption);
 	quick_pick_items.push({
-		label: footer_primary(include_available ? 'Hide uninstalled' : 'Show uninstalled'),
-		description: footer_secondary(toggle_uninstalled_desc),
+		label: footer_primary(
+			include_available ? 'Hide other available versions' : 'Show other available versions'
+		),
+		description: toggle_available_desc,
 		tooltip: include_available
-			? 'Hides uninstalled remote Node versions.'
-			: 'Fetches remote Node versions and lists versions not installed locally.',
+			? 'Hides the list of other Node.js versions available to install (from your version manager).'
+			: 'Loads and lists Node.js versions available to install (newest first), excluding already installed.',
 		iconPath: new vscode.ThemeIcon(include_available ? 'chevron-up' : 'cloud-download'),
 		action: 'toggle_available'
 	});
@@ -1190,7 +1324,6 @@ async function select_version_internal(
 		const probed_n = probed ? normalize_version(probed) || probed : '';
 		const display = probed_n && probed_n === applied_n ? probed_n : applied_n;
 		await paint_main_status_bar(context, status_item, display, backend_resolved);
-		void warm_local_versions_cache(context, backend_resolved);
 		const shown = visible_backend_label(backend_resolved);
 		vscode.window.showInformationMessage(
 			shown
@@ -1201,23 +1334,58 @@ async function select_version_internal(
 		if (error instanceof InstallCancelledError) {
 			throw error;
 		}
-		const message = error instanceof Error ? error.message : String(error);
-		vscode.window.showErrorMessage(`NodeSwitcher failed: ${message}`);
+		report_nodeswitcher_failure(context, 'NodeSwitcher failed to change the Node version.', error);
 		throw error;
 	}
 }
+
+let refresh_status_bar_debounce_timer: ReturnType<typeof setTimeout> | undefined;
 
 export async function refresh_status_bar(
 	context: vscode.ExtensionContext,
 	status_item: vscode.StatusBarItem,
 	force = false
 ): Promise<void> {
-	try {
-		const backend = await resolve_backend_cached(context, force);
-		const current = await get_current_version(backend, FAST_SHELL_TIMEOUT_MS);
-		await paint_main_status_bar(context, status_item, current, backend);
-	} catch {
-		void render_cached_status(context, status_item);
+	const run = async (): Promise<void> => {
+		try {
+			const backend = await resolve_backend_cached(context, force);
+			const current = await get_current_version(backend, FAST_SHELL_TIMEOUT_MS);
+			await paint_main_status_bar(context, status_item, current, backend);
+		} catch (e) {
+			report_nodeswitcher_failure(
+				context,
+				'NodeSwitcher could not read the active Node version for the status bar.',
+				e
+			);
+			status_item.text = status_bar_text(`$(error) NodeSwitcher — could not read Node`, 'warning');
+			status_item.tooltip = `Click to open the version picker. If this persists, check that your Node version manager (n or nvm) works in a terminal.\n\n${
+				e instanceof Error ? e.message : String(e)
+			}`;
+			apply_nodeswitcher_status_bar_style(status_item, 'probe_error');
+			apply_nodeswitcher_status_bar_visibility(status_item);
+		}
+	};
+	if (!force) {
+		if (refresh_status_bar_debounce_timer !== undefined) {
+			clearTimeout(refresh_status_bar_debounce_timer);
+		}
+		refresh_status_bar_debounce_timer = setTimeout(() => {
+			refresh_status_bar_debounce_timer = undefined;
+			void run();
+		}, 200);
+		return;
+	}
+	if (refresh_status_bar_debounce_timer !== undefined) {
+		clearTimeout(refresh_status_bar_debounce_timer);
+		refresh_status_bar_debounce_timer = undefined;
+	}
+	await run();
+}
+
+export function dispose_refresh_status_bar_debounce(): void {
+	if (refresh_status_bar_debounce_timer !== undefined) {
+		clearTimeout(refresh_status_bar_debounce_timer);
+		refresh_status_bar_debounce_timer = undefined;
 	}
 }
 
@@ -1235,9 +1403,14 @@ export async function repaint_status_bar_for_display_settings(
 	await render_cached_status(context, status_item);
 }
 
-async function get_local_versions(backend: NodeBackend): Promise<VersionEntry[]> {
+async function get_local_versions(
+	backend: NodeBackend,
+	options?: { omitCurrentProbe?: boolean }
+): Promise<VersionEntry[]> {
 	const { versions: installed, raw } = await get_installed_versions_with_raw(backend);
-	const current = await get_current_version(backend).catch(() => '');
+	const current = options?.omitCurrentProbe
+		? ''
+		: await get_current_version(backend).catch(() => '');
 	const line_map = build_version_to_list_lines(raw);
 	const mtime_map = await stat_install_dirs_for_versions(backend, installed);
 	const entries = await map_versions_async(installed, [], current);
@@ -1248,28 +1421,6 @@ async function get_local_versions(backend: NodeBackend): Promise<VersionEntry[]>
 		}
 	}
 	return entries;
-}
-
-async function warm_local_versions_cache(context: vscode.ExtensionContext, backend: NodeBackend): Promise<void> {
-	try {
-		const local = await get_local_versions(backend);
-		await context.workspaceState.update(LOCAL_VERSIONS_KEY, local);
-		await context.workspaceState.update(LOCAL_VERSIONS_AT_KEY, Date.now());
-	} catch {
-		return;
-	}
-}
-
-async function get_cached_local_versions(context: vscode.ExtensionContext): Promise<VersionEntry[] | null> {
-	const cached_at = context.workspaceState.get<number>(LOCAL_VERSIONS_AT_KEY) ?? 0;
-	if (Date.now() - cached_at > PROBE_TTL_MS) {
-		return null;
-	}
-	const cached = context.workspaceState.get<VersionEntry[]>(LOCAL_VERSIONS_KEY);
-	if (!cached || cached.length === 0) {
-		return null;
-	}
-	return cached;
 }
 
 async function resolve_live_version_for_ui(
@@ -1302,14 +1453,49 @@ export async function load_switcher_picker_entries(
 	let backend: NodeBackend;
 	try {
 		backend = await resolve_backend_cached(context, false);
-	} catch {
+	} catch (e) {
+		report_nodeswitcher_failure(
+			context,
+			'NodeSwitcher could not find a Node version manager (n or nvm) on PATH.',
+			e
+		);
 		return null;
 	}
-	const raw = (await get_cached_local_versions(context)) ?? (await get_local_versions(backend));
+	let raw: VersionEntry[];
+	let live: string;
+	try {
+		[raw, live] = await Promise.all([
+			get_local_versions(backend, { omitCurrentProbe: true }),
+			resolve_live_version_for_ui(context, backend),
+			ensure_node_release_channels_loaded()
+		]);
+	} catch (e) {
+		report_nodeswitcher_failure(
+			context,
+			'NodeSwitcher could not list installed Node versions from your version manager.',
+			e
+		);
+		return null;
+	}
 	if (raw.length === 0) {
+		try {
+			const probe = await get_installed_versions_with_raw(backend);
+			if (probe.versions.length === 0 && probe.raw.trim().length > 0) {
+				report_nodeswitcher_failure(
+					context,
+					'NodeSwitcher could not parse any installed versions from your version manager output.',
+					`Output (truncated):\n${truncate_cli_output(probe.raw, 4000)}`
+				);
+			}
+		} catch (probeErr) {
+			report_nodeswitcher_failure(
+				context,
+				'NodeSwitcher could not read installed versions from your version manager.',
+				probeErr
+			);
+		}
 		return null;
 	}
-	const live = await resolve_live_version_for_ui(context, backend);
 	const entries = rehydrate_entries_current(raw, live);
 	return { backend, entries };
 }
@@ -1341,7 +1527,7 @@ function version_is_active_row(version: string, current: string): boolean {
 	return normalize_version(version) === normalize_version(current);
 }
 
-async function map_versions_async(installed: string[], available: string[], current: string): Promise<VersionEntry[]> {
+function map_versions_async(installed: string[], available: string[], current: string): Promise<VersionEntry[]> {
 	const map = new Map<string, VersionEntry>();
 	for (const version of installed) {
 		map.set(version, {
@@ -1364,12 +1550,13 @@ async function map_versions_async(installed: string[], available: string[], curr
 	}
 
 	const rows = [...map.values()];
-	const order = await sort_versions_for_display(rows.map((row) => row.version));
-	const rank = new Map(order.map((version, index) => [version, index]));
-	return rows.sort((left, right) => rank.get(left.version)! - rank.get(right.version)!);
+	const sorted = sort_versions_semver_desc(rows.map((row) => row.version));
+	const rank = new Map(sorted.map((version, index) => [version, index]));
+	rows.sort((left, right) => rank.get(left.version)! - rank.get(right.version)!);
+	return Promise.resolve(rows);
 }
 
-async function get_installed_versions_with_raw(backend: NodeBackend): Promise<{ versions: string[]; raw: string }> {
+export async function get_installed_versions_with_raw(backend: NodeBackend): Promise<{ versions: string[]; raw: string }> {
 	if (backend === 'n') {
 		const raw = await run_n('ls', DEFAULT_SHELL_TIMEOUT_MS);
 		return { versions: parse_versions(raw), raw };
@@ -1482,38 +1669,36 @@ async function stat_install_dirs_for_versions(
 }
 
 async function get_available_versions(backend: NodeBackend): Promise<string[]> {
+	const max = get_max_other_available_versions();
 	try {
-		const from_index = await get_latest_stable_per_major_sorted(30);
-		if (from_index.length > 0) {
-			return from_index;
+		const from_cli = await get_available_versions_cli_fallback(backend);
+		if (from_cli.length > 0) {
+			return from_cli;
 		}
 	} catch {
-		// use CLI fallback
+		// fall through to nodejs.org index
+	}
+	try {
+		const from_index = await get_latest_stable_per_major_sorted(Math.max(max, 50));
+		if (from_index.length > 0) {
+			return sort_versions_semver_desc(from_index).slice(0, max);
+		}
+	} catch {
+		// use CLI fallback again
 	}
 	return get_available_versions_cli_fallback(backend);
 }
 
 async function get_available_versions_cli_fallback(backend: NodeBackend): Promise<string[]> {
+	const max = get_max_other_available_versions();
 	const raw =
 		backend === 'n'
 			? await run_n('ls-remote', DEFAULT_SHELL_TIMEOUT_MS)
 			: await run_nvm_with_fallback(['list available', 'ls-remote'], DEFAULT_SHELL_TIMEOUT_MS);
 	const lines = raw.split(/\r?\n/).filter((line) => !/\brc\.|-rc\b|-beta|-nightly|\balpha\b/i.test(line));
-	const versions = parse_versions(lines.join('\n'));
-	const by_major = new Map<number, string>();
-	for (const version of versions) {
-		const major = Number(version.split('.')[0]);
-		if (Number.isNaN(major)) {
-			continue;
-		}
-		const prev = by_major.get(major);
-		if (!prev || compare_versions_desc(prev, version) > 0) {
-			by_major.set(major, version);
-		}
-	}
-	const collapsed = [...by_major.values()];
-	const sorted = await sort_versions_for_display(collapsed);
-	return sorted.slice(0, 30);
+	const versions = collect_stable_semver_versions_from_text(lines.join('\n'));
+	const sorted = sort_versions_semver_desc(versions);
+	return sorted.slice(0, max);
 }
 
 async function get_current_version(backend: NodeBackend, timeout_ms = DEFAULT_SHELL_TIMEOUT_MS): Promise<string> {
@@ -1729,7 +1914,7 @@ async function check_and_prompt_nvm_sh_install(context: vscode.ExtensionContext)
 		);
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : String(e);
-		vscode.window.showErrorMessage(`nvm-sh install failed: ${msg}`);
+		report_nodeswitcher_failure(context, 'nvm-sh install failed.', msg);
 	}
 }
 
@@ -2044,13 +2229,14 @@ async function paint_main_status_bar(
 		) {
 			const label_suffix = tag ? ` (${tag})` : '';
 			status_item.text = status_bar_text(`$(warning) Specify Node for project${label_suffix}`, 'warning');
-			status_item.tooltip = `No .nodeswitcher file and no engines.node / .nvmrc / .node-version (optional: node-version= in .npmrc at project root). Active: ${live}.`;
+			status_item.tooltip = `No Node declaration found (order: .nodeswitcher → package.json engines → project .npmrc → .nvmrc / .node-version → user ~/.npmrc). Active: ${live}.`;
 			apply_nodeswitcher_status_bar_style(status_item, 'project_no_node_spec');
 		} else {
 			const lead = status_bar_leading_icon(pin, live);
 			status_item.text = status_bar_text(format_status_bar_text(live, tag, pin, lead), 'default');
 			apply_status_tooltip(context, status_item, tag, pin ?? undefined, live);
-			apply_nodeswitcher_status_bar_style(status_item, 'default');
+			const has_project_spec = pin !== undefined || declared_spec !== undefined;
+			apply_nodeswitcher_status_bar_style(status_item, has_project_spec ? 'project_match' : 'default');
 		}
 	}
 	apply_nodeswitcher_status_bar_visibility(status_item);
@@ -2076,8 +2262,7 @@ async function run_project_mismatch_prompt(
 		try {
 			await apply_node_environment(context, desired, backend, false);
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : String(e);
-			vscode.window.showErrorMessage(`NodeSwitcher could not switch to Node ${desired}: ${msg}`);
+			report_nodeswitcher_failure(context, `NodeSwitcher could not switch to Node ${desired}.`, e);
 			return 'dismissed';
 		}
 		return 'resolved';
@@ -2088,8 +2273,7 @@ async function run_project_mismatch_prompt(
 			await apply_node_environment(context, current_n, backend, true);
 			await persist_project_selection(context, current_n, backend);
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : String(e);
-			vscode.window.showErrorMessage(`NodeSwitcher: ${msg}`);
+			report_nodeswitcher_failure(context, 'NodeSwitcher could not update the environment.', e);
 			return 'dismissed';
 		}
 		return 'resolved';
@@ -2110,7 +2294,8 @@ export async function run_resolve_project_node_mismatch_command(
 	const raw = await get_current_version(backend, FAST_SHELL_TIMEOUT_MS).catch(() => '');
 	const cur = raw ? normalize_version(raw) : '';
 	if (!cur) {
-		vscode.window.showErrorMessage('NodeSwitcher: Could not read the active Node version.');
+		const text = 'NodeSwitcher could not read the active Node version.';
+		report_nodeswitcher_failure(context, text, text);
 		return;
 	}
 	if (cur === pin) {

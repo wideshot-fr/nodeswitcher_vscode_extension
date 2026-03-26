@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { report_nodeswitcher_failure } from './error_panel';
 import {
 	apply_picked_version_entry,
 	BACKEND_STATE_KEY,
@@ -17,7 +18,7 @@ import {
 	VersionEntry
 } from './node_backends';
 import { show_version_install_details } from './sidebar_version_details';
-import { get_node_release_channels } from './node_release_index';
+import { ensure_node_release_channels_loaded, get_node_release_channels } from './node_release_index';
 import { normalize_version, resolve_version_logo_filename } from './version_utils';
 
 function strip_footer_quickpick_padding(text: string): string {
@@ -222,7 +223,7 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 				item.iconPath = new vscode.ThemeIcon('list-flat');
 				item.command = {
 					command: 'nodeswitcher.sidebarToggleAvailable',
-					title: 'Toggle uninstalled versions',
+					title: 'Toggle other available versions',
 					arguments: [element.backend]
 				};
 				return item;
@@ -323,7 +324,10 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 
 	private async fillSwitchCacheAsync(gen: number): Promise<void> {
 		try {
-			const loaded = await load_switcher_picker_entries(this.context);
+			const [loaded] = await Promise.all([
+				load_switcher_picker_entries(this.context),
+				ensure_node_release_channels_loaded()
+			]);
 			if (gen !== this.switch_list_load_generation) {
 				return;
 			}
@@ -423,8 +427,11 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 			this.switchIncludeAvailable = true;
 			this.refresh();
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			vscode.window.showErrorMessage(`NodeSwitcher failed to load available versions: ${message}`);
+			report_nodeswitcher_failure(
+				this.context,
+				'NodeSwitcher failed to load other available Node versions.',
+				error
+			);
 		}
 	}
 
