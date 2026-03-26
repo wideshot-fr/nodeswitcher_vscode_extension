@@ -115,6 +115,7 @@ const LAST_APPLIED_VERSION_KEY = 'nodeswitcher.lastAppliedViaExtension';
 const PROJECT_PINNED_CACHE_KEY = 'nodeswitcher.projectPinnedVersionCache';
 const MISMATCH_KEEP_CURRENT_KEY = 'nodeswitcher.projectMismatchKeepCurrent';
 const MISMATCH_PROMPT_FP_KEY = 'nodeswitcher.projectMismatchPromptFingerprint';
+const MISMATCH_NOTICE_FP_KEY = 'nodeswitcher.projectMismatchNoticeFingerprint';
 const PROBE_TTL_MS = 60_000;
 const FAST_SHELL_TIMEOUT_MS = 1_800;
 const DEFAULT_SHELL_TIMEOUT_MS = 120_000;
@@ -755,6 +756,7 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 					try {
 						current_entries = await get_versions_with_available(context, b, current_entries);
 						include_available = true;
+						include_installed = false;
 						quick_pick.items = build_version_picker_items(
 							current_entries,
 							b,
@@ -779,6 +781,9 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 				}
 				if (selected.action === 'toggle_installed') {
 					include_installed = !include_installed;
+					if (include_installed) {
+						include_available = false;
+					}
 					quick_pick.items = build_version_picker_items(
 						current_entries,
 						b,
@@ -936,19 +941,22 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 function build_installed_picker_tooltip(
 	entry: VersionEntry,
 	backend: NodeBackend,
-	role: 'current' | 'installed' | 'available'
+	role: 'current' | 'installed' | 'available',
+	channel: string
 ): string {
 	const tool = backend === 'nvm' ? 'nvm' : 'n';
 	const lines: string[] = [];
 	lines.push(`Node ${entry.version}`);
+	if (channel) {
+		lines.push(`Release: ${channel}`);
+	}
 	if (entry.manager_list_line) {
 		lines.push(`${tool} list: ${entry.manager_list_line}`);
-	}
-	if (entry.install_dir_mtime) {
+	} else if (entry.install_dir_mtime) {
 		lines.push(`Install folder last modified: ${entry.install_dir_mtime}`);
 	}
 	if (role === 'current') {
-		lines.push('Active for this workspace (integrated terminal PATH).');
+		lines.push('Active for this workspace.');
 	} else if (!entry.manager_list_line && !entry.install_dir_mtime) {
 		lines.push('Installed locally.');
 	}
@@ -1093,15 +1101,29 @@ export function build_version_picker_items(
 		return tail;
 	};
 
-	const row_hover_text = (entry: VersionEntry, details: string, group_tag: string) =>
-		`Node ${entry.version}: ${details}. ${group_tag}.`;
+	const row_hover_text = (
+		entry: VersionEntry,
+		channel: string,
+		role: 'current' | 'installed' | 'available'
+	): string => {
+		const lines: string[] = [`Node ${entry.version}`];
+		if (channel) {
+			lines.push(`Release: ${channel}`);
+		}
+		if (role === 'available') {
+			lines.push('Source: Other available versions.');
+		}
+		return lines.join('\n');
+	};
 
 	const build_item = (entry: VersionEntry, role: 'current' | 'installed' | 'available') => {
 		const detailsBase =
 			role === 'current' ? 'In use now' : role === 'installed' ? '' : 'Other available version';
 		const { badge } = resolve_version_release_semantics(entry.version, release_channels);
 		const badge_for_display = role === 'available' ? '' : badge;
+		const badge_for_tooltip = badge;
 		const channel = badge_for_display ? picker_channel_kind_display(badge_for_display) : '';
+		const tooltip_channel = badge_for_tooltip ? picker_channel_kind_display(badge_for_tooltip) : '';
 		const details =
 			role === 'installed'
 				? channel
@@ -1110,8 +1132,8 @@ export function build_version_picker_items(
 					: detailsBase;
 		const gt = group_tag_for(role);
 		const tooltip = entry.is_installed
-			? build_installed_picker_tooltip(entry, backend, role)
-			: row_hover_text(entry, details, gt);
+			? build_installed_picker_tooltip(entry, backend, role, tooltip_channel)
+			: row_hover_text(entry, tooltip_channel, role);
 		const primary_label_chars = align_installed_state_in_description
 			? picker_primary_label_width
 			: version_width;
@@ -1156,7 +1178,7 @@ export function build_version_picker_items(
 	if (show_project_switch && project_pin !== undefined) {
 		const entry = entry_for_project_pin(entries, project_pin);
 		const project_switch_label = align_installed_state_in_description
-			? 'Project Node version'
+			? 'Click to switch to project node version'
 			: 'Switch to Node.js project version';
 		const project_label_padded = align_installed_state_in_description
 			? project_switch_label +
@@ -2199,16 +2221,19 @@ async function paint_main_status_bar(
 			const label_suffix = tag ? ` (${tag})` : '';
 			if (declared_mismatch && pin_mismatch) {
 				status_item.text = status_bar_text(
-					`$(warning) Node ${live}${label_suffix} \u2260 ${declared_spec} & pin ${pin}`,
+					`$(warning) Node ${live}${label_suffix} differs from project (${declared_spec})`,
 					'warning'
 				);
 			} else if (declared_mismatch) {
 				status_item.text = status_bar_text(
-					`$(warning) Node ${live}${label_suffix} \u2260 ${declared_spec}`,
+					`$(warning) Node ${live}${label_suffix} differs from project (${declared_spec})`,
 					'warning'
 				);
 			} else {
-				status_item.text = status_bar_text(format_status_bar_text(live, tag, pin, 'warning'), 'warning');
+				status_item.text = status_bar_text(
+					`$(warning) Node ${live}${label_suffix} differs from pinned project version (${pin})`,
+					'warning'
+				);
 			}
 			apply_project_mismatch_bar_tooltip(
 				context,
@@ -2221,6 +2246,16 @@ async function paint_main_status_bar(
 				pin
 			);
 			apply_nodeswitcher_status_bar_style(status_item, 'project_mismatch');
+			void maybe_show_project_mismatch_notice(
+				context,
+				status_item,
+				backend,
+				live,
+				declared_mismatch,
+				declared_spec,
+				pin_mismatch,
+				pin
+			);
 		} else if (
 			looks_like_js &&
 			!declared_spec &&
@@ -2237,12 +2272,52 @@ async function paint_main_status_bar(
 			apply_status_tooltip(context, status_item, tag, pin ?? undefined, live);
 			const has_project_spec = pin !== undefined || declared_spec !== undefined;
 			apply_nodeswitcher_status_bar_style(status_item, has_project_spec ? 'project_match' : 'default');
+			await context.workspaceState.update(MISMATCH_NOTICE_FP_KEY, undefined);
 		}
 	}
 	apply_nodeswitcher_status_bar_visibility(status_item);
 	await context.workspaceState.update(VERSION_STATE_KEY, live);
 	await context.workspaceState.update(BACKEND_STATE_KEY, backend);
 	after_status_paint?.();
+}
+
+async function maybe_show_project_mismatch_notice(
+	context: vscode.ExtensionContext,
+	status_item: vscode.StatusBarItem,
+	backend: NodeBackend,
+	live: string,
+	declared_mismatch: boolean,
+	declared_spec: string | undefined,
+	pin_mismatch: boolean,
+	pin: string | undefined
+): Promise<void> {
+	const fp = `${live}::${declared_spec ?? ''}::${pin ?? ''}::${declared_mismatch ? 1 : 0}::${pin_mismatch ? 1 : 0}`;
+	const seen = context.workspaceState.get<string>(MISMATCH_NOTICE_FP_KEY);
+	if (seen === fp) {
+		return;
+	}
+	await context.workspaceState.update(MISMATCH_NOTICE_FP_KEY, fp);
+	const buttons = pin_mismatch && pin ? ['Switch to project version', 'Open picker', 'Dismiss'] : ['Open picker', 'Dismiss'];
+	const message =
+		pin_mismatch && pin
+			? `Project expects Node ${pin}. Current is ${live}.`
+			: declared_mismatch && declared_spec
+				? `Project node declaration is ${declared_spec}. Current is ${live}.`
+				: `Project node version does not match current Node ${live}.`;
+	const choice = await vscode.window.showInformationMessage(message, ...buttons);
+	if (choice === 'Switch to project version' && pin) {
+		try {
+			await apply_node_environment(context, pin, backend, false);
+			await persist_project_selection(context, pin, backend);
+			await paint_main_status_bar(context, status_item, pin, backend);
+		} catch (error) {
+			report_nodeswitcher_failure(context, `NodeSwitcher could not switch to Node ${pin}.`, error);
+		}
+		return;
+	}
+	if (choice === 'Open picker') {
+		await open_version_picker(context, status_item);
+	}
 }
 
 async function run_project_mismatch_prompt(
