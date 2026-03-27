@@ -110,6 +110,12 @@ export type NodePickerItem = vscode.QuickPickItem & {
 export const BACKEND_STATE_KEY = 'nodeswitcher.backend';
 const BACKEND_PROBE_AT_KEY = 'nodeswitcher.backendProbeAt';
 const BACKEND_PROBE_VALUE_KEY = 'nodeswitcher.backendProbeValue';
+const BACKEND_RECONCILE_OFFER_AT_KEY = 'nodeswitcher.backendReconcileOfferAt';
+const RUNTIME_SNAPSHOT_JSON_KEY = 'nodeswitcher.runtimeSnapshotJson';
+const RUNTIME_SNAPSHOT_AT_KEY = 'nodeswitcher.runtimeSnapshotAt';
+const N_READY_NO_VERSIONS_HINT_KEY = 'nodeswitcher.nReadyNoVersionsHintShown';
+const RUNTIME_SNAPSHOT_TTL_MS = 60_000;
+const RUNTIME_PROBE_TIMEOUT_MS = 800;
 export const VERSION_STATE_KEY = 'nodeswitcher.activeNodeVersion';
 const LAST_APPLIED_VERSION_KEY = 'nodeswitcher.lastAppliedViaExtension';
 const PROJECT_PINNED_CACHE_KEY = 'nodeswitcher.projectPinnedVersionCache';
@@ -117,8 +123,10 @@ const MISMATCH_KEEP_CURRENT_KEY = 'nodeswitcher.projectMismatchKeepCurrent';
 const MISMATCH_PROMPT_FP_KEY = 'nodeswitcher.projectMismatchPromptFingerprint';
 const MISMATCH_NOTICE_FP_KEY = 'nodeswitcher.projectMismatchNoticeFingerprint';
 const PROBE_TTL_MS = 60_000;
+const PROBE_CACHE_VERIFY_AFTER_MS = 25_000;
 const FAST_SHELL_TIMEOUT_MS = 1_800;
 const DEFAULT_SHELL_TIMEOUT_MS = 120_000;
+const BACKEND_RECONCILE_OFFER_COOLDOWN_MS = 120_000;
 const PROJECT_PROMPTED_KEY = 'nodeswitcher.projectPrompted';
 const PICKER_OPENED_KEY = 'nodeswitcher.pickerOpenedOnce';
 const NVM_SH_PROMPT_DISMISSED_KEY = 'nodeswitcher.nvmShInstallDismissed';
@@ -126,10 +134,19 @@ const NVM_WINDOWS_PROMPT_DISMISSED_KEY = 'nodeswitcher.nvmWindowsInstallDismisse
 const N_MACOS_PROMPT_DISMISSED_KEY = 'nodeswitcher.nMacosInstallDismissed';
 const NVM_SH_INSTALL_SCRIPT_URL =
 	'https://raw.githubusercontent.com/nvm-sh/nvm/refs/tags/v0.40.4/install.sh';
+const NVM_SH_DOC_URL = 'https://github.com/nvm-sh/nvm';
 const NVM_WINDOWS_RELEASES_URL = 'https://github.com/coreybutler/nvm-windows/releases';
 const N_MACOS_DOC_URL = 'https://github.com/tj/n';
 const N_PM_GLOBAL_INSTALL = 'npm install -g n';
 const N_BREW_INSTALL = 'brew install n';
+const N_PM_GLOBAL_INSTALL_SUDO = 'sudo npm install -g n';
+const N_FIX_USR_LOCAL_N_OWNERSHIP = 'sudo mkdir -p /usr/local/n && sudo chown -R "$(whoami)" /usr/local/n';
+const LAST_FAILED_SWITCH_JSON_KEY = 'nodeswitcher.lastFailedSwitchJson';
+const INSTALLER_REMEDIATION_DARWIN_KEY = 'nodeswitcher.installerRemediationDarwin';
+const INSTALLER_REMEDIATION_UNIX_KEY = 'nodeswitcher.installerRemediationUnix';
+const NODESWITCHER_INSTALL_TERMINAL_NAME = 'NodeSwitcher install';
+const MANAGER_DETECT_POLL_MS = 2_000;
+const MANAGER_DETECT_MAX_MS = 300_000;
 export const STATUS_BAR_ICON = 'nodeswitcher-logo';
 export const STATUS_BAR_FOREGROUND = '#ffffff';
 const VERSION_LABEL_MIN_CHARS = 18;
@@ -146,6 +163,363 @@ function trim_picker_logo_cache(): void {
 		}
 		padded_picker_logo_uri_cache.delete(first);
 	}
+}
+
+type LastFailedSwitchPayload = {
+	version: string;
+	backend: NodeBackend;
+	is_installed: boolean;
+};
+
+type NPermissionClass = 'usr_local_n' | 'generic';
+
+export type InstallerRemediationMethod = 'user_prefix' | 'chown_usr_local' | 'brew' | 'nvm' | 'npm_sudo';
+
+export type RemediationProgressReporter = {
+	onStep?: (index: number, total: number, step: InstallerRemediationMethod, label: string) => void;
+	onStepEnd?: (step: InstallerRemediationMethod, ok: boolean) => void;
+	onDone?: (outcome: 'success' | 'failed' | 'cancelled', savedMethod?: InstallerRemediationMethod) => void;
+};
+
+function installer_remediation_storage_key(): string {
+	return process.platform === 'darwin' ? INSTALLER_REMEDIATION_DARWIN_KEY : INSTALLER_REMEDIATION_UNIX_KEY;
+}
+
+function is_installer_remediation_method(value: string | undefined): value is InstallerRemediationMethod {
+	return (
+		value === 'user_prefix' ||
+		value === 'chown_usr_local' ||
+		value === 'brew' ||
+		value === 'nvm' ||
+		value === 'npm_sudo'
+	);
+}
+
+export function get_saved_installer_remediation_method(
+	context: vscode.ExtensionContext
+): InstallerRemediationMethod | undefined {
+	const raw = context.globalState.get<string>(installer_remediation_storage_key());
+	return is_installer_remediation_method(raw) ? raw : undefined;
+}
+
+async function save_installer_remediation_method(
+	context: vscode.ExtensionContext,
+	method: InstallerRemediationMethod
+): Promise<void> {
+	await context.globalState.update(installer_remediation_storage_key(), method);
+}
+
+export function get_ordered_installer_remediation_steps(
+	saved: InstallerRemediationMethod | undefined,
+	platform_has_brew: boolean
+): InstallerRemediationMethod[] {
+	let all: InstallerRemediationMethod[] = ['user_prefix', 'chown_usr_local', 'brew', 'nvm', 'npm_sudo'];
+	if (!platform_has_brew) {
+		all = all.filter((s) => s !== 'brew');
+	}
+	if (!saved || !all.includes(saved)) {
+		return all;
+	}
+	return [saved, ...all.filter((s) => s !== saved)];
+}
+
+async function test_n_can_list_versions(): Promise<boolean> {
+	if (process.platform === 'win32') {
+		return false;
+	}
+	try {
+		await run_n('ls', FAST_SHELL_TIMEOUT_MS);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function poll_until_remediation(
+	token: vscode.CancellationToken,
+	predicate: () => Promise<boolean>
+): Promise<boolean> {
+	const start = Date.now();
+	while (Date.now() - start < MANAGER_DETECT_MAX_MS && !token.isCancellationRequested) {
+		if (await predicate()) {
+			return true;
+		}
+		await new Promise((r) => setTimeout(r, MANAGER_DETECT_POLL_MS));
+	}
+	return false;
+}
+
+async function try_user_prefix_remediation(context: vscode.ExtensionContext): Promise<boolean> {
+	const dir = path.join(homedir(), '.n');
+	await fs.mkdir(dir, { recursive: true });
+	await vscode.workspace
+		.getConfiguration('nodeswitcher')
+		.update('nPrefix', dir, vscode.ConfigurationTarget.Global);
+	void get_runtime_snapshot_cached(context, true).catch(() => undefined);
+	return test_n_can_list_versions();
+}
+
+async function offer_retry_after_remediation(context: vscode.ExtensionContext, headline: string): Promise<void> {
+	const pending = context.workspaceState.get<string>(LAST_FAILED_SWITCH_JSON_KEY);
+	await resolve_backend_cached(context, true).catch(() => undefined);
+	void get_runtime_snapshot_cached(context, true).catch(() => undefined);
+	if (pending) {
+		const choice = await vscode.window.showInformationMessage(
+			headline,
+			'Retry last Node switch',
+			'Open version picker',
+			'Dismiss'
+		);
+		if (choice === 'Retry last Node switch') {
+			await vscode.commands.executeCommand('nodeswitcher.retryLastNodeSwitch');
+		} else if (choice === 'Open version picker') {
+			await vscode.commands.executeCommand('nodeswitcher.openVersionPickerQuickPick');
+		}
+	} else {
+		void vscode.window.showInformationMessage(`${headline} Open the version picker when ready.`);
+	}
+}
+
+export function installer_remediation_step_label(step: InstallerRemediationMethod): string {
+	switch (step) {
+		case 'user_prefix':
+			return 'user N_PREFIX (~/.n) + settings';
+		case 'chown_usr_local':
+			return 'fix /usr/local/n ownership (sudo in terminal)';
+		case 'brew':
+			return 'brew install n';
+		case 'nvm':
+			return 'install nvm-sh';
+		case 'npm_sudo':
+			return 'sudo npm install -g n';
+		default:
+			return step;
+	}
+}
+
+async function execute_installer_remediation_step(
+	context: vscode.ExtensionContext,
+	step: InstallerRemediationMethod,
+	terminal: vscode.Terminal,
+	token: vscode.CancellationToken
+): Promise<boolean> {
+	switch (step) {
+		case 'user_prefix':
+			return try_user_prefix_remediation(context);
+		case 'chown_usr_local':
+			terminal.show(true);
+			terminal.sendText(N_FIX_USR_LOCAL_N_OWNERSHIP, true);
+			return poll_until_remediation(token, () => test_n_can_list_versions());
+		case 'brew':
+			terminal.show(true);
+			terminal.sendText(N_BREW_INSTALL, true);
+			return poll_until_remediation(token, () => test_n_can_list_versions());
+		case 'nvm':
+			terminal.show(true);
+			terminal.sendText(`curl -fsSL '${NVM_SH_INSTALL_SCRIPT_URL}' | bash`, true);
+			return poll_until_remediation(token, () => probe_nvm(FAST_SHELL_TIMEOUT_MS));
+		case 'npm_sudo':
+			terminal.show(true);
+			terminal.sendText(N_PM_GLOBAL_INSTALL_SUDO, true);
+			return poll_until_remediation(token, () => test_n_can_list_versions());
+		default:
+			return false;
+	}
+}
+
+async function run_chained_installer_remediation_loop(
+	context: vscode.ExtensionContext,
+	steps: InstallerRemediationMethod[],
+	terminal: vscode.Terminal,
+	token: vscode.CancellationToken,
+	reporter: RemediationProgressReporter | undefined,
+	notification_report: ((message: string) => void) | undefined
+): Promise<'success' | 'failed' | 'cancelled'> {
+	for (let i = 0; i < steps.length; i++) {
+		if (token.isCancellationRequested) {
+			reporter?.onDone?.('cancelled');
+			void vscode.window.showInformationMessage('NodeSwitcher: Repair cancelled.');
+			return 'cancelled';
+		}
+		const step = steps[i]!;
+		const label = installer_remediation_step_label(step);
+		const line = `${i + 1}/${steps.length}: ${label}`;
+		notification_report?.(line);
+		reporter?.onStep?.(i + 1, steps.length, step, label);
+		const ok = await execute_installer_remediation_step(context, step, terminal, token);
+		reporter?.onStepEnd?.(step, ok);
+		if (ok) {
+			await save_installer_remediation_method(context, step);
+			reporter?.onDone?.('success', step);
+			await offer_retry_after_remediation(
+				context,
+				`NodeSwitcher: repair step "${label}" worked. Saved as preferred installer fix for this OS.`
+			);
+			return 'success';
+		}
+	}
+	reporter?.onDone?.('failed');
+	void vscode.window.showWarningMessage(
+		'NodeSwitcher: Automatic repair did not fix n/nvm. Reload the window or install tools outside VS Code.'
+	);
+	return 'failed';
+}
+
+export async function run_single_installer_remediation_step(
+	context: vscode.ExtensionContext,
+	step: InstallerRemediationMethod,
+	token: vscode.CancellationToken
+): Promise<boolean> {
+	if (process.platform === 'win32') {
+		return false;
+	}
+	const terminal = get_or_create_install_terminal();
+	const ok = await execute_installer_remediation_step(context, step, terminal, token);
+	if (ok) {
+		await save_installer_remediation_method(context, step);
+		await offer_retry_after_remediation(
+			context,
+			`NodeSwitcher: step "${installer_remediation_step_label(step)}" worked. Saved as preferred fix.`
+		);
+	}
+	return ok;
+}
+
+export async function run_chained_installer_remediation(
+	context: vscode.ExtensionContext,
+	options?: { reporter?: RemediationProgressReporter; token?: vscode.CancellationToken }
+): Promise<'success' | 'failed' | 'cancelled'> {
+	if (process.platform === 'win32') {
+		void vscode.window.showInformationMessage('NodeSwitcher: Automatic installer repair is for macOS/Linux only.');
+		return 'failed';
+	}
+	const snap = await get_runtime_snapshot_cached(context, false).catch(() => null);
+	const platform_has_brew = process.platform === 'darwin' || snap?.has_brew === true;
+	const saved = get_saved_installer_remediation_method(context);
+	const steps = get_ordered_installer_remediation_steps(saved, platform_has_brew);
+	const terminal = get_or_create_install_terminal();
+	const reporter = options?.reporter;
+	const token = options?.token;
+	if (token !== undefined) {
+		return run_chained_installer_remediation_loop(context, steps, terminal, token, reporter, undefined);
+	}
+	return vscode.window.withProgress(
+		{
+			location: vscode.ProgressLocation.Notification,
+			title: 'NodeSwitcher: installer repair',
+			cancellable: true
+		},
+		async (progress, progress_token) =>
+			run_chained_installer_remediation_loop(
+				context,
+				steps,
+				terminal,
+				progress_token,
+				reporter,
+				(message) => progress.report({ message })
+			)
+	);
+}
+
+function get_resolved_n_prefix_from_config(): string | undefined {
+	const raw = vscode.workspace.getConfiguration('nodeswitcher').get<string>('nPrefix', '').trim();
+	if (!raw) {
+		return undefined;
+	}
+	if (raw.startsWith('~')) {
+		const rest = raw.slice(1).replace(/^\//, '');
+		return path.join(homedir(), rest);
+	}
+	return path.isAbsolute(raw) ? raw : path.resolve(raw);
+}
+
+function n_process_env(): NodeJS.ProcessEnv {
+	const np = get_resolved_n_prefix_from_config();
+	if (!np) {
+		return process.env;
+	}
+	return { ...process.env, N_PREFIX: np };
+}
+
+function n_install_prefix_for_paths(): string {
+	const cfg = get_resolved_n_prefix_from_config();
+	if (cfg) {
+		return cfg;
+	}
+	if (process.env.N_PREFIX) {
+		return process.env.N_PREFIX;
+	}
+	return process.platform === 'win32' ? homedir() : '/usr/local';
+}
+
+function classify_n_permission_error(error: unknown): NPermissionClass {
+	const t = error_text(error);
+	if (/\/usr\/local\/n\b/i.test(t)) {
+		return 'usr_local_n';
+	}
+	if (/sudo required/i.test(t) && /N_PREFIX|\/usr\/local/i.test(t)) {
+		return 'usr_local_n';
+	}
+	if (/N_PREFIX/i.test(t) && /permission denied|mkdir/i.test(t)) {
+		return 'usr_local_n';
+	}
+	return 'generic';
+}
+
+function n_permission_reconciliation_hint(error: unknown): string {
+	if (classify_n_permission_error(error) !== 'usr_local_n') {
+		return 'After fixing permissions or setting nodeswitcher.nPrefix, use Command Palette: NodeSwitcher: Retry Last Node Version Switch.';
+	}
+	return `n needs a writable install prefix. Set nodeswitcher.nPrefix to e.g. ${path.join(
+		homedir(),
+		'.n'
+	)}, reload the window, or fix /usr/local/n ownership. Then: NodeSwitcher: Retry Last Node Version Switch.`;
+}
+
+async function persist_last_failed_switch(
+	context: vscode.ExtensionContext,
+	backend: NodeBackend,
+	entry: VersionEntry
+): Promise<void> {
+	const payload: LastFailedSwitchPayload = {
+		version: entry.version,
+		backend,
+		is_installed: entry.is_installed
+	};
+	await context.workspaceState.update(LAST_FAILED_SWITCH_JSON_KEY, JSON.stringify(payload));
+}
+
+async function clear_last_failed_switch(context: vscode.ExtensionContext): Promise<void> {
+	await context.workspaceState.update(LAST_FAILED_SWITCH_JSON_KEY, undefined);
+}
+
+export async function retry_last_failed_node_switch(
+	context: vscode.ExtensionContext,
+	status_item: vscode.StatusBarItem
+): Promise<void> {
+	const raw = context.workspaceState.get<string>(LAST_FAILED_SWITCH_JSON_KEY);
+	if (!raw) {
+		vscode.window.showInformationMessage('NodeSwitcher: No failed switch to retry.');
+		return;
+	}
+	let parsed: LastFailedSwitchPayload;
+	try {
+		parsed = JSON.parse(raw) as LastFailedSwitchPayload;
+	} catch {
+		await clear_last_failed_switch(context);
+		vscode.window.showInformationMessage('NodeSwitcher: Retry state was invalid; cleared.');
+		return;
+	}
+	if (!parsed.version || (parsed.backend !== 'n' && parsed.backend !== 'nvm')) {
+		await clear_last_failed_switch(context);
+		return;
+	}
+	const entry: VersionEntry = {
+		version: parsed.version,
+		is_installed: parsed.is_installed,
+		is_current: false
+	};
+	await apply_picked_version_entry(context, status_item, parsed.backend, entry);
 }
 
 function get_max_other_available_versions(): number {
@@ -172,9 +546,6 @@ function normalize_backend_for_platform(backend: NodeBackend): NodeBackend {
 	if (process.platform === 'win32') {
 		return 'nvm';
 	}
-	if (process.platform === 'darwin') {
-		return 'n';
-	}
 	return backend;
 }
 
@@ -194,12 +565,15 @@ export async function resolve_backend(preferred?: NodeBackend | null, timeout_ms
 		return 'nvm';
 	}
 	if (process.platform === 'darwin') {
-		if (!(await probe_n(timeout_ms))) {
-			throw new Error(
-				`On macOS, NodeSwitcher uses the npm package n. Install with \`${N_PM_GLOBAL_INSTALL}\` or \`${N_BREW_INSTALL}\`, then reload. See ${N_MACOS_DOC_URL}`
-			);
+		if (await probe_n(timeout_ms)) {
+			return 'n';
 		}
-		return 'n';
+		if (await probe_nvm(timeout_ms)) {
+			return 'nvm';
+		}
+		throw new Error(
+			`On macOS, NodeSwitcher prefers n and falls back to nvm. Install \`n\` with \`${N_PM_GLOBAL_INSTALL}\` or \`${N_BREW_INSTALL}\`, or install nvm from ${NVM_SH_DOC_URL}, then reload.`
+		);
 	}
 	const normalized_preferred =
 		preferred === 'nvm' ? preferred : preferred === 'n' ? preferred : null;
@@ -215,7 +589,9 @@ export async function resolve_backend(preferred?: NodeBackend | null, timeout_ms
 	if (await probe_nvm(timeout_ms)) {
 		return 'nvm';
 	}
-	throw new Error('Neither n nor nvm-sh was found on PATH. Install one of them or use Linux/macOS with the right tool.');
+	throw new Error(
+		`Neither n nor nvm-sh was found on PATH. On Linux/Unix install n (e.g. \`${N_PM_GLOBAL_INSTALL}\` or your distribution's package) or nvm from ${NVM_SH_DOC_URL}, then reload.`
+	);
 }
 
 function build_project_needs_display(
@@ -396,6 +772,13 @@ function status_bar_text(full_text: string, tone: 'default' | 'warning' | 'loadi
 	return `$(${STATUS_BAR_ICON})`;
 }
 
+function set_initializer_loading_phase(status_item: vscode.StatusBarItem, title: string, tooltip?: string): void {
+	status_item.text = status_bar_text(`$(sync~spin) $(${STATUS_BAR_ICON}) NodeSwitcher — ${title}`, 'loading');
+	status_item.tooltip = tooltip ?? `NodeSwitcher — ${title}`;
+	apply_nodeswitcher_status_bar_style(status_item);
+	apply_nodeswitcher_status_bar_visibility(status_item);
+}
+
 function status_bar_leading_icon(project_pin: string | undefined, current: string): string {
 	if (project_pin && normalize_version(current) !== normalize_version(project_pin)) {
 		return 'warning';
@@ -502,9 +885,42 @@ export async function initialize_status(context: vscode.ExtensionContext, status
 		}
 	}
 
-	status_item.text = status_bar_text(`$(sync~spin) $(${STATUS_BAR_ICON}) NodeSwitcher — reading Node version…`, 'loading');
+	let runtime_snap: RuntimeSnapshot | undefined;
+	if (process.platform !== 'win32') {
+		set_initializer_loading_phase(status_item, 'Checking Node tools…', 'Probing PATH for node, n, nvm, brew…');
+		runtime_snap = await get_runtime_snapshot_cached(context, false);
+		set_initializer_loading_phase(
+			status_item,
+			'Resolving version manager…',
+			runtime_snapshot_tooltip_detail(runtime_snap)
+		);
+	} else {
+		status_item.text = status_bar_text(
+			`$(sync~spin) $(${STATUS_BAR_ICON}) NodeSwitcher — resolving version manager…`,
+			'loading'
+		);
+		status_item.tooltip = 'NodeSwitcher — resolving Node version manager (n / nvm)…';
+		apply_nodeswitcher_status_bar_style(status_item);
+		apply_nodeswitcher_status_bar_visibility(status_item);
+	}
+
 	try {
 		const backend = await resolve_backend_cached(context, true);
+		if (process.platform !== 'win32' && runtime_snap) {
+			set_initializer_loading_phase(
+				status_item,
+				'Reading active Node version…',
+				runtime_snapshot_tooltip_detail(runtime_snap)
+			);
+		} else {
+			status_item.text = status_bar_text(
+				`$(sync~spin) $(${STATUS_BAR_ICON}) NodeSwitcher — reading Node version…`,
+				'loading'
+			);
+			status_item.tooltip = 'NodeSwitcher — reading active Node version…';
+			apply_nodeswitcher_status_bar_style(status_item);
+			apply_nodeswitcher_status_bar_visibility(status_item);
+		}
 		const current = await get_current_version(backend, 5_000);
 		const current_n = normalize_version(current) || current;
 		await context.workspaceState.update(VERSION_STATE_KEY, current_n);
@@ -512,8 +928,8 @@ export async function initialize_status(context: vscode.ExtensionContext, status
 		await context.workspaceState.update(BACKEND_STATE_KEY, backend);
 		await apply_project_selection_if_present(context, status_item);
 		await ensure_project_selection_prompt(context, status_item);
-	} catch {
-		void render_cached_status(context, status_item);
+	} catch (e) {
+		await handle_status_bar_backend_failure(context, status_item, e);
 	}
 }
 
@@ -544,9 +960,58 @@ export async function apply_node_environment(
 	const scoped = get_nodeswitcher_terminal_env_collection(context);
 	scoped.delete('PATH');
 	scoped.prepend('PATH', `${bin_dir}${sep}`, { applyAtProcessCreation: true });
+	if (backend === 'n') {
+		const np = get_resolved_n_prefix_from_config();
+		if (np) {
+			scoped.replace('N_PREFIX', np, { applyAtProcessCreation: true });
+		} else {
+			scoped.delete('N_PREFIX');
+		}
+	} else {
+		scoped.delete('N_PREFIX');
+	}
 	await context.workspaceState.update(VERSION_STATE_KEY, safe);
 	await context.workspaceState.update(BACKEND_STATE_KEY, backend);
 	await context.workspaceState.update(LAST_APPLIED_VERSION_KEY, safe);
+}
+
+function parse_n_bin_output_line(out: string): string | undefined {
+	const bin = out
+		.trim()
+		.split(/\r?\n/)
+		.map((s) => s.trim())
+		.filter(Boolean)
+		.pop();
+	return bin || undefined;
+}
+
+function n_output_indicates_version_required(text: string): boolean {
+	return /version required/i.test(text);
+}
+
+async function try_n_which_node_path(version: string): Promise<string | undefined> {
+	try {
+		const raw = await run_n(`which ${version}`);
+		if (n_output_indicates_version_required(raw)) {
+			return undefined;
+		}
+		const p = parse_n_bin_output_line(raw);
+		if (!p) {
+			return undefined;
+		}
+		try {
+			await fs.access(p);
+			return p;
+		} catch {
+			return undefined;
+		}
+	} catch (err) {
+		const raw = combined_exec_error_text(err);
+		if (n_output_indicates_version_required(raw)) {
+			return undefined;
+		}
+		return undefined;
+	}
 }
 
 async function resolve_node_executable(version: string, backend: NodeBackend, already_switched: boolean): Promise<string> {
@@ -554,15 +1019,39 @@ async function resolve_node_executable(version: string, backend: NodeBackend, al
 		if (!already_switched) {
 			await run_n(`${version}`);
 		}
-		const out = await run_n('bin');
-		const bin = out
-			.trim()
-			.split(/\r?\n/)
-			.map((s) => s.trim())
-			.filter(Boolean)
-			.pop();
-		if (!bin) {
-			throw new Error('Could not resolve node path from n bin');
+		const read_n_bin_path = async (): Promise<{ path: string | undefined; raw: string }> => {
+			try {
+				const raw = await run_n('bin');
+				if (n_output_indicates_version_required(raw)) {
+					return { path: undefined, raw };
+				}
+				return { path: parse_n_bin_output_line(raw), raw };
+			} catch (err) {
+				const raw = combined_exec_error_text(err);
+				if (n_output_indicates_version_required(raw)) {
+					return { path: undefined, raw };
+				}
+				throw err;
+			}
+		};
+		let { path: bin, raw } = await read_n_bin_path();
+		const needs_retry = !bin || n_output_indicates_version_required(raw);
+		if (needs_retry) {
+			await run_n(`${version}`);
+			({ path: bin, raw } = await read_n_bin_path());
+		}
+		if (!bin || n_output_indicates_version_required(raw)) {
+			const which_path = await try_n_which_node_path(version);
+			if (which_path) {
+				return which_path;
+			}
+			const disk_path = await resolve_installed_node_executable('n', version);
+			if (disk_path) {
+				return disk_path;
+			}
+			throw new Error(
+				'n is installed but has no active Node version yet. In a terminal run `n lts` or pick a version in NodeSwitcher, then reload if needed.'
+			);
 		}
 		return bin;
 	}
@@ -584,9 +1073,8 @@ async function resolve_node_executable(version: string, backend: NodeBackend, al
 		}
 		return line;
 	}
-	const shell = process.env.SHELL ?? '/bin/bash';
-	const script = `source "$HOME/.nvm/nvm.sh" 2>/dev/null || true; nvm use ${version} >/dev/null || exit 1; command -v node`;
-	const { stdout } = await exec_async(`${shell} -lc ${JSON.stringify(script)}`, {
+	const script = `${unix_nvm_init_bash()}; nvm use ${version} >/dev/null || exit 1; command -v node`;
+	const { stdout } = await exec_async(`/bin/bash -lc ${JSON.stringify(script)}`, {
 		timeout: 120000,
 		env: process.env
 	});
@@ -647,12 +1135,12 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 			resolve(value);
 		};
 
-		const apply_entry_from_picker = async (entry: VersionEntry) => {
+		const apply_entry_from_picker = async (entry: VersionEntry, prefer_switch_feedback = false) => {
 			if (backend === undefined) {
 				return;
 			}
 			const b = backend;
-			const show_progress = !entry.is_installed;
+			const show_progress = prefer_switch_feedback || !entry.is_installed;
 			let cancel_btn_dispose: vscode.Disposable | undefined;
 			const cancel_btn: vscode.QuickInputButton = {
 				iconPath: new vscode.ThemeIcon('close'),
@@ -674,13 +1162,18 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 			}
 			const on_phase: InstallPhaseCallback = (phase, version) => {
 				const vv = node_version_display_v(version);
-				const verb = phase === 'downloading' ? 'Downloading' : 'Installing';
+				const verb =
+					phase === 'downloading'
+						? 'Downloading'
+						: prefer_switch_feedback
+							? 'Switching'
+							: 'Installing';
 				quick_pick.placeholder = `${verb} ${vv}...`;
 				quick_pick.title = `${verb} Node ${version}`;
 			};
 			try {
 				if (show_progress) {
-					on_phase('downloading', entry.version);
+					on_phase(prefer_switch_feedback && entry.is_installed ? 'installing' : 'downloading', entry.version);
 					const target = normalize_version(entry.version);
 					quick_pick.items = quick_pick.items.map((item) => {
 						if (!item.entry || normalize_version(item.entry.version) !== target) {
@@ -805,7 +1298,7 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 					return;
 				}
 				try {
-					await apply_entry_from_picker(selected.entry);
+					await apply_entry_from_picker(selected.entry, selected.action === 'switch_to_project');
 					finish(selected.entry);
 				} catch (err) {
 					if (err instanceof InstallCancelledError) {
@@ -814,12 +1307,25 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 						}
 						return;
 					}
-					report_nodeswitcher_failure(
-						context,
-						'NodeSwitcher failed to apply the selected Node version.',
-						err
-					);
-					finish(undefined);
+					const detail = error_text(err);
+					const hint = n_permission_reconciliation_hint(err);
+					const target = normalize_version(selected.entry.version);
+					quick_pick.title = 'Node switch failed';
+					quick_pick.placeholder = `Failed to apply ${node_version_display_v(selected.entry.version)}.`;
+					quick_pick.items = quick_pick.items.map((item) => {
+						if (!item.entry || normalize_version(item.entry.version) !== target) {
+							return item;
+						}
+						return {
+							...item,
+							label: `$(warning) ${item.label}`,
+							description: 'Switch failed. Press Enter to retry.',
+							tooltip: `${detail}\n\n${hint}\n\nPress Enter to retry.`,
+							iconPath: new vscode.ThemeIcon('warning')
+						};
+					});
+					quick_pick.activeItems = [selected];
+					quick_pick.selectedItems = [selected];
 				}
 			}),
 			quick_pick.onDidHide(() => {
@@ -840,6 +1346,7 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 					if (!picker_closed) {
 						const text = `NodeSwitcher could not use the Node version manager for this OS (${host_platform_label()}). Install the required tool and reload the window.`;
 						report_nodeswitcher_failure(context, text, e);
+						void offer_backend_install_recovery(context);
 						finish(undefined);
 					}
 					return;
@@ -871,6 +1378,17 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 				}
 				if (picker_closed) {
 					return;
+				}
+				if (raw_entries.length === 0) {
+					try {
+						raw_entries = await get_versions_with_available(context, b, []);
+						if (raw_entries.length > 0) {
+							include_available = true;
+							include_installed = false;
+						}
+					} catch {
+						/* fall through to probe error handling */
+					}
 				}
 				if (raw_entries.length === 0) {
 					try {
@@ -1076,8 +1594,18 @@ export function build_version_picker_items(
 		normalize_version(current_version_for_pin) !== normalize_version(project_pin);
 	const installed_entries = entries.filter((entry) => entry.is_installed && !entry.is_current);
 	installed_entries.sort((a, b) => compare_versions_desc(a.version, b.version));
-	const available_entries = entries.filter((entry) => !entry.is_installed);
+	let available_entries = entries.filter((entry) => !entry.is_installed);
 	available_entries.sort((a, b) => compare_versions_desc(a.version, b.version));
+	if (process.platform === 'darwin' && backend === 'n') {
+		const kept_versions = new Set(
+			keep_latest_per_major(available_entries.map((entry) => entry.version)).map(
+				(version) => normalize_version(version) || version
+			)
+		);
+		available_entries = available_entries.filter((entry) =>
+			kept_versions.has(normalize_version(entry.version) || entry.version)
+		);
+	}
 
 	const group_tag_for = (role: 'current' | 'installed' | 'available') =>
 		role === 'current' ? 'In Use' : role === 'installed' ? 'Local' : 'Other available versions';
@@ -1299,6 +1827,283 @@ export function node_version_display_v(version: string): string {
 	return /^v/i.test(t) ? t : `v${t}`;
 }
 
+function error_text(error: unknown): string {
+	if (error instanceof Error) {
+		return error.message;
+	}
+	return String(error);
+}
+
+function combined_exec_error_text(err: unknown): string {
+	if (typeof err === 'object' && err !== null) {
+		const e = err as { message?: unknown; stdout?: unknown; stderr?: unknown };
+		const bits = [e.message, e.stderr, e.stdout]
+			.map((part) => (typeof part === 'string' ? part : ''))
+			.filter((s) => s.length > 0);
+		if (bits.length > 0) {
+			return bits.join('\n');
+		}
+	}
+	return error_text(err);
+}
+
+export function is_n_version_required_error(error: unknown): boolean {
+	const text = combined_exec_error_text(error).toLowerCase();
+	return (
+		/version required/.test(text) ||
+		/no active node version yet/.test(text) ||
+		(/\bn bin\b/.test(text) && /version required/.test(text))
+	);
+}
+
+function nvm_dir_for_shell(): string {
+	return process.env.NVM_DIR || path.join(homedir(), '.nvm');
+}
+
+function unix_nvm_init_bash(): string {
+	return [
+		'export NVM_DIR="${NVM_DIR:-$HOME/.nvm}";',
+		'if [ -s "$NVM_DIR/nvm.sh" ]; then . "$NVM_DIR/nvm.sh";',
+		'elif [ -s "${XDG_CONFIG_HOME:-$HOME/.config}/nvm/nvm.sh" ]; then',
+		'export NVM_DIR="${NVM_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/nvm}";',
+		'. "$NVM_DIR/nvm.sh";',
+		'elif [ -s "/usr/share/nvm/nvm.sh" ]; then . "/usr/share/nvm/nvm.sh";',
+		'elif [ -s "/opt/homebrew/opt/nvm/nvm.sh" ]; then . "/opt/homebrew/opt/nvm/nvm.sh";',
+		'elif [ -s "/usr/local/opt/nvm/nvm.sh" ]; then . "/usr/local/opt/nvm/nvm.sh";',
+		'fi'
+	].join(' ');
+}
+
+type RuntimeSnapshot = {
+	collected_at: number;
+	has_node: boolean;
+	has_n_cmd: boolean;
+	has_nvm: boolean;
+	has_brew: boolean;
+	n_versions_dir: boolean;
+	brew_formula_n: boolean;
+};
+
+function empty_runtime_snapshot(): RuntimeSnapshot {
+	return {
+		collected_at: Date.now(),
+		has_node: false,
+		has_n_cmd: false,
+		has_nvm: false,
+		has_brew: false,
+		n_versions_dir: false,
+		brew_formula_n: false
+	};
+}
+
+async function bash_probe_y(script: string, timeout_ms: number): Promise<boolean> {
+	const full = `/bin/bash -lc ${JSON.stringify(script)}`;
+	try {
+		const { stdout } = await exec_async(full, { timeout: timeout_ms, env: process.env });
+		return stdout.trim() === 'y';
+	} catch {
+		return false;
+	}
+}
+
+async function collect_runtime_snapshot(): Promise<RuntimeSnapshot> {
+	if (process.platform === 'win32') {
+		return empty_runtime_snapshot();
+	}
+	const t = RUNTIME_PROBE_TIMEOUT_MS;
+	const n_versions_script =
+		'if [ -n "${N_PREFIX:-}" ] && [ -d "${N_PREFIX}/n/versions" ]; then echo y;' +
+		' elif [ -d /usr/local/n/versions ]; then echo y;' +
+		' elif [ -d /opt/homebrew/n/versions ]; then echo y;' +
+		' else bp="$(brew --prefix n 2>/dev/null)"; if [ -n "$bp" ] && [ -d "$bp/n/versions" ]; then echo y; else echo n; fi; fi';
+	const brew_formula_script =
+		'command -v brew >/dev/null 2>&1 && brew list --formula n 2>/dev/null | grep -Fxq n && echo y || echo n';
+	const [has_node, has_n_cmd, has_brew, has_nvm, n_versions_dir, brew_formula_n] = await Promise.all([
+		bash_probe_y('command -v node >/dev/null 2>&1 && echo y || echo n', t),
+		bash_probe_y('command -v n >/dev/null 2>&1 && echo y || echo n', t),
+		bash_probe_y('command -v brew >/dev/null 2>&1 && echo y || echo n', t),
+		bash_probe_y(`${unix_nvm_init_bash()}; command -v nvm >/dev/null 2>&1 && echo y || echo n`, t),
+		bash_probe_y(n_versions_script, t),
+		bash_probe_y(brew_formula_script, t)
+	]);
+	return {
+		collected_at: Date.now(),
+		has_node,
+		has_n_cmd,
+		has_nvm,
+		has_brew,
+		n_versions_dir,
+		brew_formula_n
+	};
+}
+
+function is_valid_runtime_snapshot(o: unknown): o is RuntimeSnapshot {
+	if (!o || typeof o !== 'object') {
+		return false;
+	}
+	const s = o as Record<string, unknown>;
+	return (
+		typeof s.collected_at === 'number' &&
+		typeof s.has_node === 'boolean' &&
+		typeof s.has_n_cmd === 'boolean' &&
+		typeof s.has_nvm === 'boolean' &&
+		typeof s.has_brew === 'boolean' &&
+		typeof s.n_versions_dir === 'boolean' &&
+		typeof s.brew_formula_n === 'boolean'
+	);
+}
+
+export async function get_runtime_snapshot_cached(
+	context: vscode.ExtensionContext,
+	force: boolean
+): Promise<RuntimeSnapshot> {
+	if (process.platform === 'win32') {
+		return empty_runtime_snapshot();
+	}
+	const at = context.workspaceState.get<number>(RUNTIME_SNAPSHOT_AT_KEY) ?? 0;
+	const raw = context.workspaceState.get<string>(RUNTIME_SNAPSHOT_JSON_KEY);
+	if (!force && Date.now() - at < RUNTIME_SNAPSHOT_TTL_MS && raw) {
+		try {
+			const parsed: unknown = JSON.parse(raw);
+			if (is_valid_runtime_snapshot(parsed)) {
+				return parsed;
+			}
+		} catch {
+			/* use fresh snapshot */
+		}
+	}
+	const snap = await collect_runtime_snapshot();
+	await context.workspaceState.update(RUNTIME_SNAPSHOT_JSON_KEY, JSON.stringify(snap));
+	await context.workspaceState.update(RUNTIME_SNAPSHOT_AT_KEY, Date.now());
+	return snap;
+}
+
+function runtime_snapshot_tooltip_detail(snapshot: RuntimeSnapshot): string {
+	const tools: string[] = [];
+	if (snapshot.has_node) {
+		tools.push('node');
+	}
+	if (snapshot.has_n_cmd) {
+		tools.push('n');
+	}
+	if (snapshot.has_nvm) {
+		tools.push('nvm');
+	}
+	if (snapshot.has_brew) {
+		tools.push('brew');
+	}
+	const line = tools.length > 0 ? tools.join(', ') : 'none detected';
+	const bits = [`Tools: ${line}`];
+	if (snapshot.n_versions_dir) {
+		bits.push('n versions dir');
+	}
+	if (snapshot.brew_formula_n) {
+		bits.push('brew formula n');
+	}
+	return bits.join(' · ');
+}
+
+async function maybe_hint_n_ready_no_versions(context: vscode.ExtensionContext): Promise<void> {
+	if (context.globalState.get<boolean>(N_READY_NO_VERSIONS_HINT_KEY) === true) {
+		return;
+	}
+	await context.globalState.update(N_READY_NO_VERSIONS_HINT_KEY, true);
+	void vscode.window.showInformationMessage(
+		'NodeSwitcher: n is installed but no local Node versions are installed yet. Open the version picker to install one, or run `n lts` in a terminal.'
+	);
+}
+
+function get_or_create_install_terminal(): vscode.Terminal {
+	let t = vscode.window.terminals.find((x) => x.name === NODESWITCHER_INSTALL_TERMINAL_NAME);
+	if (!t) {
+		const wf = vscode.workspace.workspaceFolders?.[0];
+		t = vscode.window.createTerminal({ name: NODESWITCHER_INSTALL_TERMINAL_NAME, cwd: wf?.uri.fsPath });
+	}
+	t.show(true);
+	return t;
+}
+
+export function reveal_nodeswitcher_install_terminal(): void {
+	get_or_create_install_terminal().show(true);
+}
+
+export function send_text_in_nodeswitcher_install_terminal(text: string, execute = true): void {
+	get_or_create_install_terminal().sendText(text, execute);
+}
+
+async function send_text_in_install_terminal_and_poll_for_manager(
+	context: vscode.ExtensionContext,
+	command: string,
+	progress_detail: string
+): Promise<boolean> {
+	const terminal = get_or_create_install_terminal();
+	terminal.sendText(command, true);
+	return vscode.window.withProgress(
+		{
+			location: vscode.ProgressLocation.Notification,
+			title: 'NodeSwitcher',
+			cancellable: true
+		},
+		async (progress, token) => {
+			const start = Date.now();
+			while (Date.now() - start < MANAGER_DETECT_MAX_MS && !token.isCancellationRequested) {
+				const elapsed_s = Math.floor((Date.now() - start) / 1000);
+				progress.report({
+					message: `${progress_detail} — elapsed ${elapsed_s}s. Complete any prompts in the ${NODESWITCHER_INSTALL_TERMINAL_NAME} terminal; polling for n or nvm.`
+				});
+				if ((await probe_n(FAST_SHELL_TIMEOUT_MS)) || (await probe_nvm(FAST_SHELL_TIMEOUT_MS))) {
+					await offer_retry_after_remediation(context, 'NodeSwitcher detected n or nvm.');
+					return true;
+				}
+				await new Promise((r) => setTimeout(r, MANAGER_DETECT_POLL_MS));
+			}
+			if (token.isCancellationRequested) {
+				vscode.window.showInformationMessage('NodeSwitcher install wait cancelled.');
+				return false;
+			}
+			vscode.window.showInformationMessage(
+				'NodeSwitcher still does not see n or nvm. When install finishes, reload the window or try again.'
+			);
+			return false;
+		}
+	);
+}
+
+function is_unix_permission_issue(error: unknown): boolean {
+	if (process.platform === 'win32') {
+		return false;
+	}
+	const text = error_text(error);
+	const lower = text.toLowerCase();
+	if (
+		/\balready installed\b/i.test(text) ||
+		/\bup[- ]to[- ]date\b/i.test(lower) ||
+		/no such file or directory/i.test(text) ||
+		/version required/i.test(text) ||
+		/\bn bin\b/i.test(lower) ||
+		/\/n\/versions/i.test(text)
+	) {
+		return false;
+	}
+	return /(\beacces\b|\beperm\b|permission denied|cannot create.*\bdir|mkdir:.*permission|mkdir:.*denied|failed to mkdir)/i.test(
+		text
+	);
+}
+
+async function maybe_prompt_unix_permission_guidance(context: vscode.ExtensionContext, error: unknown): Promise<void> {
+	if (!is_unix_permission_issue(error)) {
+		return;
+	}
+	const selection = await vscode.window.showWarningMessage(
+		'NodeSwitcher install failed due to permissions.',
+		'Open repair panel',
+		'Dismiss'
+	);
+	if (selection === 'Open repair panel') {
+		await vscode.commands.executeCommand('nodeswitcher.openRemediationPanel', error_text(error), 'permission');
+	}
+}
+
 export async function apply_picked_version_entry(
 	context: vscode.ExtensionContext,
 	status_item: vscode.StatusBarItem,
@@ -1319,21 +2124,53 @@ async function select_version_internal(
 	cancel_signal?: AbortSignal
 ): Promise<void> {
 	try {
-		if (backend === 'nvm') {
-			if (!entry.is_installed) {
-				on_install_phase?.('downloading', entry.version);
-				await run_nvm(`install ${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
-				on_install_phase?.('installing', entry.version);
-				await run_nvm(`use ${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
-			} else {
-				await run_nvm(`use ${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
-			}
-		} else if (!entry.is_installed) {
-			on_install_phase?.('downloading', entry.version);
-			await run_n(`${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
-			on_install_phase?.('installing', entry.version);
-		} else {
-			await run_n(`${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
+		const previous_text = status_item.text;
+		const previous_tooltip = status_item.tooltip;
+		const set_install_feedback = (phase: InstallPhase, version: string) => {
+			const vv = node_version_display_v(version);
+			const message = phase === 'downloading' ? `Installing Node ${vv}...` : `Switching to Node ${vv}...`;
+			on_install_phase?.(phase, version);
+			status_item.text = status_bar_text(`$(sync~spin) $(${STATUS_BAR_ICON}) ${message}`, 'loading');
+			status_item.tooltip = message;
+			apply_nodeswitcher_status_bar_style(status_item);
+			apply_nodeswitcher_status_bar_visibility(status_item);
+		};
+		try {
+			await vscode.window.withProgress(
+				{ location: vscode.ProgressLocation.Notification, title: 'NodeSwitcher', cancellable: false },
+				async (progress) => {
+					const report_phase = (phase: InstallPhase, version: string) => {
+						const vv = node_version_display_v(version);
+						const message = phase === 'downloading' ? `Installing Node ${vv}...` : `Switching to Node ${vv}...`;
+						set_install_feedback(phase, version);
+						progress.report({ message });
+					};
+					if (backend === 'nvm') {
+						if (!entry.is_installed) {
+							report_phase('downloading', entry.version);
+							await run_nvm(`install ${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
+							report_phase('installing', entry.version);
+							await run_nvm(`use ${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
+						} else {
+							report_phase('installing', entry.version);
+							await run_nvm(`use ${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
+						}
+						return;
+					}
+					if (!entry.is_installed) {
+						report_phase('downloading', entry.version);
+						await run_n(`${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
+						report_phase('installing', entry.version);
+						return;
+					}
+					report_phase('installing', entry.version);
+					await run_n(`${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
+				}
+			);
+		} finally {
+			status_item.text = previous_text;
+			status_item.tooltip = previous_tooltip;
+			apply_nodeswitcher_status_bar_visibility(status_item);
 		}
 		await apply_node_environment(context, entry.version, backend, true);
 		const applied_raw =
@@ -1347,6 +2184,7 @@ async function select_version_internal(
 		const display = probed_n && probed_n === applied_n ? probed_n : applied_n;
 		await paint_main_status_bar(context, status_item, display, backend_resolved);
 		const shown = visible_backend_label(backend_resolved);
+		await clear_last_failed_switch(context);
 		vscode.window.showInformationMessage(
 			shown
 				? `NodeSwitcher (${shown}) set Node ${display} for new integrated terminals (PATH). Open a new terminal if one is already open.`
@@ -1356,7 +2194,32 @@ async function select_version_internal(
 		if (error instanceof InstallCancelledError) {
 			throw error;
 		}
-		report_nodeswitcher_failure(context, 'NodeSwitcher failed to change the Node version.', error);
+		await persist_last_failed_switch(context, backend, entry);
+		let skip_error_panel_for_remediation = false;
+		if (backend === 'n' && is_n_version_required_error(error)) {
+			const choice = await vscode.window.showWarningMessage(
+				'n has no active default Node version yet.',
+				'Open first-time setup',
+				'Dismiss'
+			);
+			if (choice === 'Open first-time setup') {
+				await vscode.commands.executeCommand(
+					'nodeswitcher.openRemediationPanel',
+					error_text(error),
+					'n_no_active'
+				);
+				skip_error_panel_for_remediation = true;
+			}
+		} else {
+			await maybe_prompt_unix_permission_guidance(context, error);
+		}
+		if (!skip_error_panel_for_remediation) {
+			report_nodeswitcher_failure(
+				context,
+				'NodeSwitcher failed to apply the selected Node version.',
+				error_text(error)
+			);
+		}
 		throw error;
 	}
 }
@@ -1370,21 +2233,28 @@ export async function refresh_status_bar(
 ): Promise<void> {
 	const run = async (): Promise<void> => {
 		try {
+			let runtime_snap: RuntimeSnapshot | undefined;
+			if (force && process.platform !== 'win32') {
+				set_initializer_loading_phase(status_item, 'Checking tools…', 'Refreshing runtime snapshot…');
+				runtime_snap = await get_runtime_snapshot_cached(context, true);
+				set_initializer_loading_phase(
+					status_item,
+					'Resolving version manager…',
+					runtime_snapshot_tooltip_detail(runtime_snap)
+				);
+			}
 			const backend = await resolve_backend_cached(context, force);
+			if (force && process.platform !== 'win32' && runtime_snap) {
+				set_initializer_loading_phase(
+					status_item,
+					'Reading active Node version…',
+					runtime_snapshot_tooltip_detail(runtime_snap)
+				);
+			}
 			const current = await get_current_version(backend, FAST_SHELL_TIMEOUT_MS);
 			await paint_main_status_bar(context, status_item, current, backend);
 		} catch (e) {
-			report_nodeswitcher_failure(
-				context,
-				'NodeSwitcher could not read the active Node version for the status bar.',
-				e
-			);
-			status_item.text = status_bar_text(`$(error) NodeSwitcher — could not read Node`, 'warning');
-			status_item.tooltip = `Click to open the version picker. If this persists, check that your Node version manager (n or nvm) works in a terminal.\n\n${
-				e instanceof Error ? e.message : String(e)
-			}`;
-			apply_nodeswitcher_status_bar_style(status_item, 'probe_error');
-			apply_nodeswitcher_status_bar_visibility(status_item);
+			await handle_status_bar_backend_failure(context, status_item, e);
 		}
 	};
 	if (!force) {
@@ -1501,6 +2371,13 @@ export async function load_switcher_picker_entries(
 	}
 	if (raw.length === 0) {
 		try {
+			raw = await get_versions_with_available(context, backend, []);
+		} catch {
+			/* fall through */
+		}
+	}
+	if (raw.length === 0) {
+		try {
 			const probe = await get_installed_versions_with_raw(backend);
 			if (probe.versions.length === 0 && probe.raw.trim().length > 0) {
 				report_nodeswitcher_failure(
@@ -1529,7 +2406,11 @@ export async function get_versions_with_available(
 ): Promise<VersionEntry[]> {
 	const installed = base_entries.filter((entry) => entry.is_installed).map((entry) => entry.version);
 	const current = await resolve_live_version_for_ui(context, backend);
-	const available = await get_available_versions(backend);
+	const available_raw = await get_available_versions(backend);
+	const available =
+		process.platform === 'darwin' && installed.length === 0
+			? keep_latest_per_major(available_raw)
+			: available_raw;
 	const prior = new Map(base_entries.map((entry) => [entry.version, entry]));
 	const rows = await map_versions_async(installed, available, current);
 	for (const row of rows) {
@@ -1540,6 +2421,25 @@ export async function get_versions_with_available(
 		}
 	}
 	return rows;
+}
+
+function keep_latest_per_major(versions: string[]): string[] {
+	const out: string[] = [];
+	const seen = new Set<number>();
+	const sorted = sort_versions_semver_desc(versions);
+	for (const version of sorted) {
+		const normalized = normalize_version(version);
+		if (!normalized) {
+			continue;
+		}
+		const major = Number(normalized.split('.')[0]);
+		if (!Number.isFinite(major) || seen.has(major)) {
+			continue;
+		}
+		seen.add(major);
+		out.push(version);
+	}
+	return out;
 }
 
 function version_is_active_row(version: string, current: string): boolean {
@@ -1578,10 +2478,49 @@ function map_versions_async(installed: string[], available: string[], current: s
 	return Promise.resolve(rows);
 }
 
+function sanitize_n_ls_raw(raw: string): string {
+	return raw
+		.split(/\r?\n/)
+		.filter((line) => {
+			const t = line.trim();
+			if (!t) {
+				return false;
+			}
+			if (/^find:\s*/i.test(t)) {
+				return false;
+			}
+			if (/No such file or directory/i.test(t)) {
+				return false;
+			}
+			if (/not a directory/i.test(t)) {
+				return false;
+			}
+			return true;
+		})
+		.join('\n');
+}
+
+function is_n_missing_versions_tree_output(raw: string): boolean {
+	if (parse_versions(sanitize_n_ls_raw(raw)).length > 0) {
+		return false;
+	}
+	const t = raw.trim();
+	if (!t) {
+		return true;
+	}
+	return /No such file or directory/i.test(t) || /find:\s/i.test(t) || /not a directory/i.test(t);
+}
+
 export async function get_installed_versions_with_raw(backend: NodeBackend): Promise<{ versions: string[]; raw: string }> {
 	if (backend === 'n') {
-		const raw = await run_n('ls', DEFAULT_SHELL_TIMEOUT_MS);
-		return { versions: parse_versions(raw), raw };
+		const raw_full = await run_n('ls', DEFAULT_SHELL_TIMEOUT_MS);
+		const raw_clean = sanitize_n_ls_raw(raw_full);
+		const versions = parse_versions(raw_clean.length > 0 ? raw_clean : raw_full);
+		if (versions.length === 0 && is_n_missing_versions_tree_output(raw_full)) {
+			return { versions: [], raw: '' };
+		}
+		const raw_for_ui = raw_clean.trim() ? raw_clean : raw_full;
+		return { versions, raw: raw_for_ui };
 	}
 	const raw = await run_nvm_with_fallback(['list', 'ls'], DEFAULT_SHELL_TIMEOUT_MS);
 	return { versions: parse_versions(raw), raw };
@@ -1618,7 +2557,7 @@ function candidate_install_dirs(backend: NodeBackend, version: string): string[]
 		return [path.join(nvm_dir, 'versions', 'node', vn)];
 	}
 	if (backend === 'n') {
-		const n_prefix = process.env.N_PREFIX || (process.platform === 'win32' ? homedir() : '/usr/local');
+		const n_prefix = n_install_prefix_for_paths();
 		return [path.join(n_prefix, 'n', 'versions', 'node', v), path.join(n_prefix, 'n', 'versions', 'node', vn)];
 	}
 	return [];
@@ -1693,20 +2632,12 @@ async function stat_install_dirs_for_versions(
 async function get_available_versions(backend: NodeBackend): Promise<string[]> {
 	const max = get_max_other_available_versions();
 	try {
-		const from_cli = await get_available_versions_cli_fallback(backend);
-		if (from_cli.length > 0) {
-			return from_cli;
-		}
-	} catch {
-		// fall through to nodejs.org index
-	}
-	try {
 		const from_index = await get_latest_stable_per_major_sorted(Math.max(max, 50));
 		if (from_index.length > 0) {
 			return sort_versions_semver_desc(from_index).slice(0, max);
 		}
 	} catch {
-		// use CLI fallback again
+		// fall through to CLI fallback
 	}
 	return get_available_versions_cli_fallback(backend);
 }
@@ -1725,27 +2656,34 @@ async function get_available_versions_cli_fallback(backend: NodeBackend): Promis
 
 async function get_current_version(backend: NodeBackend, timeout_ms = DEFAULT_SHELL_TIMEOUT_MS): Promise<string> {
 	if (backend === 'n') {
-		const out = await run_n('bin', timeout_ms);
-		const bin = out
-			.trim()
-			.split(/\r?\n/)
-			.map((s) => s.trim())
-			.filter(Boolean)
-			.pop();
-		if (!bin) {
-			throw new Error('Could not read n bin path');
+		try {
+			const out = await run_n('bin', timeout_ms);
+			const bin = parse_n_bin_output_line(out);
+			if (bin) {
+				const { stdout } = await exec_async(`${JSON.stringify(bin)} -v`, {
+					timeout: timeout_ms,
+					env: process.env
+				});
+				const v = stdout.trim();
+				const parsed = parse_versions(v);
+				if (parsed.length > 0) {
+					return parsed[0];
+				}
+				const match = v.match(/v?\d+\.\d+\.\d+/);
+				if (match) {
+					return normalize_version(match[0]);
+				}
+			}
+		} catch {
+			// `n bin` fails with "version required" when n is installed but no version is active yet (e.g. fresh Homebrew install).
 		}
-		const { stdout } = await exec_async(`${JSON.stringify(bin)} -v`, { timeout: timeout_ms, env: process.env });
-		const v = stdout.trim();
-		const parsed = parse_versions(v);
-		if (parsed.length > 0) {
-			return parsed[0];
+		const path_ver = await try_get_node_version_from_path(timeout_ms);
+		if (path_ver) {
+			return path_ver;
 		}
-		const match = v.match(/v?\d+\.\d+\.\d+/);
-		if (match) {
-			return normalize_version(match[0]);
-		}
-		throw new Error('Could not parse node -v from n');
+		throw new Error(
+			'n is installed but has no active Node version yet. In a terminal run `n lts` or pick a version in NodeSwitcher, then reload if needed.'
+		);
 	}
 	const output = await run_nvm_with_fallback(['current', 'version'], timeout_ms);
 	const parsed = parse_versions(output);
@@ -1757,6 +2695,25 @@ async function get_current_version(backend: NodeBackend, timeout_ms = DEFAULT_SH
 		return normalize_version(match[0]);
 	}
 	throw new Error('Could not determine current Node version from nvm');
+}
+
+export async function probe_n_has_active_node(timeout_ms = FAST_SHELL_TIMEOUT_MS): Promise<boolean> {
+	if (process.platform === 'win32') {
+		return false;
+	}
+	try {
+		await get_current_version('n', timeout_ms);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+export async function poll_until_n_has_active_node(token: vscode.CancellationToken): Promise<boolean> {
+	if (process.platform === 'win32') {
+		return false;
+	}
+	return poll_until_remediation(token, () => probe_n_has_active_node());
 }
 
 async function probe_nvm(timeout_ms: number): Promise<boolean> {
@@ -1782,6 +2739,52 @@ async function probe_n(timeout_ms: number): Promise<boolean> {
 		} catch {
 			return false;
 		}
+	}
+}
+
+async function verify_cached_backend_still_works(backend: NodeBackend, timeout_ms: number): Promise<boolean> {
+	if (backend === 'n') {
+		return probe_n(timeout_ms);
+	}
+	if (backend === 'nvm') {
+		return probe_nvm(timeout_ms);
+	}
+	return false;
+}
+
+async function try_get_node_version_from_path(timeout_ms: number): Promise<string | undefined> {
+	if (process.platform === 'win32') {
+		try {
+			const { stdout } = await exec_async(`powershell -NoProfile -Command "node -v"`, {
+				timeout: timeout_ms,
+				env: process.env
+			});
+			const line = stdout.trim();
+			const parsed = parse_versions(line);
+			if (parsed.length > 0) {
+				return parsed[0];
+			}
+			const match = line.match(/v?\d+\.\d+\.\d+/);
+			return match ? normalize_version(match[0]) : undefined;
+		} catch {
+			return undefined;
+		}
+	}
+	try {
+		const script = 'command -v node >/dev/null 2>&1 && node -v';
+		const { stdout } = await exec_async(`/bin/bash -lc ${JSON.stringify(script)}`, {
+			timeout: timeout_ms,
+			env: process.env
+		});
+		const line = stdout.trim();
+		const parsed = parse_versions(line);
+		if (parsed.length > 0) {
+			return parsed[0];
+		}
+		const match = line.match(/v?\d+\.\d+\.\d+/);
+		return match ? normalize_version(match[0]) : undefined;
+	} catch {
+		return undefined;
 	}
 }
 
@@ -1812,61 +2815,105 @@ async function check_and_prompt_nvm_windows(context: vscode.ExtensionContext): P
 	}
 }
 
-type NMacInstallPick = vscode.QuickPickItem & { value: 'npm' | 'brew' | 'docs' | 'dismiss' };
+type UnixNodeManagerInstallPick = vscode.QuickPickItem & {
+	value: 'npm' | 'brew' | 'nvm_install' | 'n_docs' | 'nvm_docs' | 'dismiss';
+};
 
-async function check_and_prompt_n_macos(context: vscode.ExtensionContext): Promise<void> {
-	if (context.globalState.get<boolean>(N_MACOS_PROMPT_DISMISSED_KEY) === true) {
+async function check_and_prompt_node_manager_unix(context: vscode.ExtensionContext): Promise<void> {
+	if (process.platform === 'win32') {
 		return;
 	}
-	if (await probe_n(FAST_SHELL_TIMEOUT_MS)) {
+	const dismiss_key = process.platform === 'darwin' ? N_MACOS_PROMPT_DISMISSED_KEY : NVM_SH_PROMPT_DISMISSED_KEY;
+	if (context.globalState.get<boolean>(dismiss_key) === true) {
 		return;
 	}
-	const pick = await vscode.window.showQuickPick<NMacInstallPick>(
-		[
-			{
-				label: '$(terminal) Copy npm install (global)',
-				description: N_PM_GLOBAL_INSTALL,
-				value: 'npm'
-			},
-			{
-				label: '$(package) Copy Homebrew install',
-				description: N_BREW_INSTALL,
-				value: 'brew'
-			},
-			{
-				label: '$(link-external) Open n (tj/n) on GitHub',
-				description: N_MACOS_DOC_URL,
-				value: 'docs'
-			},
-			{ label: "Don't ask again", description: 'Hide this until you reset global state', value: 'dismiss' }
-		],
-		{
-			title: 'NodeSwitcher: install n (macOS)',
-			placeHolder: 'On macOS, NodeSwitcher uses the npm package `n`. It was not found on PATH.'
+	const snap = await get_runtime_snapshot_cached(context, false);
+	if (await probe_nvm(FAST_SHELL_TIMEOUT_MS)) {
+		return;
+	}
+	const has_n = snap.has_n_cmd || (await probe_n(FAST_SHELL_TIMEOUT_MS));
+	if (has_n) {
+		if (!snap.n_versions_dir) {
+			await maybe_hint_n_ready_no_versions(context);
 		}
+		return;
+	}
+	const rows: UnixNodeManagerInstallPick[] = [
+		{
+			label: '$(terminal) Terminal: sudo npm global install n',
+			description: N_PM_GLOBAL_INSTALL_SUDO,
+			value: 'npm'
+		}
+	];
+	const offer_brew =
+		!snap.brew_formula_n &&
+		((process.platform === 'darwin' && !snap.has_n_cmd) || (snap.has_brew && !snap.has_n_cmd));
+	if (offer_brew) {
+		rows.push({
+			label: '$(terminal) Terminal: Homebrew install n',
+			description: N_BREW_INSTALL,
+			value: 'brew'
+		});
+	}
+	rows.push(
+		{
+			label: '$(terminal) Terminal: install nvm-sh (curl | bash)',
+			description: NVM_SH_DOC_URL,
+			value: 'nvm_install'
+		},
+		{
+			label: '$(link-external) Open n (tj/n) on GitHub',
+			description: N_MACOS_DOC_URL,
+			value: 'n_docs'
+		},
+		{
+			label: '$(link-external) Open nvm-sh docs',
+			description: NVM_SH_DOC_URL,
+			value: 'nvm_docs'
+		},
+		{ label: "Don't ask again", description: 'Hide this until you reset global state', value: 'dismiss' }
 	);
+	const os_label = process.platform === 'darwin' ? 'macOS' : process.platform;
+	const pick = await vscode.window.showQuickPick<UnixNodeManagerInstallPick>(rows, {
+		title: `NodeSwitcher: install Node manager (${os_label})`,
+		placeHolder: 'Opens the NodeSwitcher integrated terminal and waits until n or nvm is detected.'
+	});
 	if (!pick) {
 		return;
 	}
 	if (pick.value === 'dismiss') {
-		await context.globalState.update(N_MACOS_PROMPT_DISMISSED_KEY, true);
+		await context.globalState.update(dismiss_key, true);
 		return;
 	}
 	if (pick.value === 'npm') {
-		await vscode.env.clipboard.writeText(N_PM_GLOBAL_INSTALL);
-		vscode.window.showInformationMessage(
-			`Copied \`${N_PM_GLOBAL_INSTALL}\`. Run in a terminal, then reload the window so NodeSwitcher can find n.`
+		await send_text_in_install_terminal_and_poll_for_manager(
+			context,
+			N_PM_GLOBAL_INSTALL_SUDO,
+			'npm global install n'
 		);
 		return;
 	}
 	if (pick.value === 'brew') {
-		await vscode.env.clipboard.writeText(N_BREW_INSTALL);
-		vscode.window.showInformationMessage(
-			`Copied \`${N_BREW_INSTALL}\`. Run in a terminal, then reload the window so NodeSwitcher can find n.`
+		await send_text_in_install_terminal_and_poll_for_manager(
+			context,
+			N_BREW_INSTALL,
+			'Homebrew install n'
 		);
 		return;
 	}
-	if (pick.value === 'docs') {
+	if (pick.value === 'nvm_install') {
+		await send_text_in_install_terminal_and_poll_for_manager(
+			context,
+			`curl -fsSL '${NVM_SH_INSTALL_SCRIPT_URL}' | bash`,
+			'nvm-sh install'
+		);
+		return;
+	}
+	if (pick.value === 'nvm_docs') {
+		await vscode.env.openExternal(vscode.Uri.parse(NVM_SH_DOC_URL));
+		return;
+	}
+	if (pick.value === 'n_docs') {
 		await vscode.env.openExternal(vscode.Uri.parse(N_MACOS_DOC_URL));
 	}
 }
@@ -1876,67 +2923,65 @@ export async function check_and_prompt_required_runtime(context: vscode.Extensio
 		await check_and_prompt_nvm_windows(context);
 		return;
 	}
-	if (process.platform === 'darwin') {
-		await check_and_prompt_n_macos(context);
-		return;
-	}
-	await check_and_prompt_nvm_sh_install(context);
+	await check_and_prompt_node_manager_unix(context);
 }
 
-async function check_and_prompt_nvm_sh_install(context: vscode.ExtensionContext): Promise<void> {
-	if (process.platform === 'win32' || process.platform === 'darwin') {
+async function offer_backend_install_recovery(context: vscode.ExtensionContext): Promise<void> {
+	if (process.platform === 'win32') {
 		return;
 	}
-	if (context.globalState.get<boolean>(NVM_SH_PROMPT_DISMISSED_KEY) === true) {
-		return;
-	}
-	if (await probe_n(FAST_SHELL_TIMEOUT_MS)) {
-		return;
-	}
-	if (await probe_nvm(FAST_SHELL_TIMEOUT_MS)) {
-		return;
-	}
-	const install_one_liner = `curl -fsSL '${NVM_SH_INSTALL_SCRIPT_URL}' | bash`;
-	const selection = await vscode.window.showInformationMessage(
-		'NodeSwitcher: no Node version manager found (nvm-sh or n). Install official nvm from nvm-sh?',
-		'Copy install command',
-		"Don't ask again",
-		'Install now'
+	const choice = await vscode.window.showInformationMessage(
+		'Open the NodeSwitcher install helper? It runs commands in an integrated terminal and waits until n or nvm is detected.',
+		'Show install options',
+		'Dismiss'
 	);
-	if (selection === "Don't ask again") {
-		await context.globalState.update(NVM_SH_PROMPT_DISMISSED_KEY, true);
+	if (choice !== 'Show install options') {
 		return;
 	}
-	if (selection === 'Copy install command') {
-		await vscode.env.clipboard.writeText(install_one_liner);
-		vscode.window.showInformationMessage(
-			'Install command copied. Run it in a terminal, then reload the window so your shell loads nvm.'
-		);
+	await check_and_prompt_node_manager_unix(context);
+}
+
+async function offer_backend_install_recovery_throttled(context: vscode.ExtensionContext): Promise<void> {
+	const now = Date.now();
+	const last = context.workspaceState.get<number>(BACKEND_RECONCILE_OFFER_AT_KEY) ?? 0;
+	if (now - last < BACKEND_RECONCILE_OFFER_COOLDOWN_MS) {
 		return;
 	}
-	if (selection !== 'Install now') {
-		return;
+	await context.workspaceState.update(BACKEND_RECONCILE_OFFER_AT_KEY, now);
+	await offer_backend_install_recovery(context);
+}
+
+async function handle_status_bar_backend_failure(
+	context: vscode.ExtensionContext,
+	status_item: vscode.StatusBarItem,
+	error: unknown
+): Promise<void> {
+	await context.workspaceState.update(BACKEND_PROBE_VALUE_KEY, undefined);
+	await context.workspaceState.update(BACKEND_PROBE_AT_KEY, undefined);
+	await context.workspaceState.update(BACKEND_STATE_KEY, undefined);
+	report_nodeswitcher_failure(
+		context,
+		'NodeSwitcher could not read the active Node version for the status bar.',
+		error
+	);
+	const path_version = await try_get_node_version_from_path(5_000);
+	const detail = error instanceof Error ? error.message : String(error);
+	if (path_version) {
+		const vn = normalize_version(path_version) || path_version;
+		await context.workspaceState.update(VERSION_STATE_KEY, vn);
+		status_item.text = status_bar_text(
+			`$(warning) Node ${vn} on PATH — install n or nvm to switch`,
+			'warning'
+		);
+		status_item.tooltip = `Node ${vn} works on PATH, but NodeSwitcher needs n or nvm (see error below). Click for the version picker; use “Show install options” when offered.\n\n${detail}`;
+	} else {
+		status_item.text = status_bar_text(`$(error) NodeSwitcher — could not read Node`, 'warning');
+		status_item.tooltip = `Click to open the version picker. If this persists, install n or nvm.\n\n${detail}`;
 	}
-	try {
-		await vscode.window.withProgress(
-			{
-				location: vscode.ProgressLocation.Notification,
-				title: 'Installing nvm-sh…',
-				cancellable: false
-			},
-			async () => {
-				await exec_async(`/bin/bash -lc ${JSON.stringify(`curl -fsSL '${NVM_SH_INSTALL_SCRIPT_URL}' | bash`)}`, {
-					timeout: 300_000,
-					env: process.env
-				});
-			}
-		);
-		vscode.window.showInformationMessage(
-			'nvm-sh install finished. Reload the window or open a new integrated terminal with nvm loaded in your profile.'
-		);
-	} catch (e) {
-		const msg = e instanceof Error ? e.message : String(e);
-		report_nodeswitcher_failure(context, 'nvm-sh install failed.', msg);
+	apply_nodeswitcher_status_bar_style(status_item, 'probe_error');
+	apply_nodeswitcher_status_bar_visibility(status_item);
+	if (process.platform !== 'win32') {
+		void offer_backend_install_recovery_throttled(context);
 	}
 }
 
@@ -1944,13 +2989,33 @@ async function resolve_backend_cached(context: vscode.ExtensionContext, force: b
 	const cached_backend = context.workspaceState.get<NodeBackend>(BACKEND_PROBE_VALUE_KEY);
 	const cached_at = context.workspaceState.get<number>(BACKEND_PROBE_AT_KEY) ?? 0;
 	if (!force && cached_backend && Date.now() - cached_at < PROBE_TTL_MS && backend_matches_platform(cached_backend)) {
-		return normalize_backend_for_platform(cached_backend);
+		const coerced = normalize_backend_for_platform(cached_backend);
+		const cache_age = Date.now() - cached_at;
+		const needs_health_check = cache_age >= PROBE_CACHE_VERIFY_AFTER_MS;
+		if (!needs_health_check || (await verify_cached_backend_still_works(coerced, FAST_SHELL_TIMEOUT_MS))) {
+			return coerced;
+		}
+		await context.workspaceState.update(BACKEND_PROBE_VALUE_KEY, undefined);
+		await context.workspaceState.update(BACKEND_PROBE_AT_KEY, 0);
 	}
-	const backend = await resolve_backend(null, FAST_SHELL_TIMEOUT_MS);
-	const coerced = normalize_backend_for_platform(backend);
-	await context.workspaceState.update(BACKEND_PROBE_VALUE_KEY, coerced);
-	await context.workspaceState.update(BACKEND_PROBE_AT_KEY, Date.now());
-	return coerced;
+	const run_probe = async (timeout_ms: number) => {
+		const backend = await resolve_backend(null, timeout_ms);
+		const coerced = normalize_backend_for_platform(backend);
+		await context.workspaceState.update(BACKEND_PROBE_VALUE_KEY, coerced);
+		await context.workspaceState.update(BACKEND_PROBE_AT_KEY, Date.now());
+		return coerced;
+	};
+	try {
+		return await run_probe(FAST_SHELL_TIMEOUT_MS);
+	} catch (first) {
+		try {
+			return await run_probe(DEFAULT_SHELL_TIMEOUT_MS);
+		} catch {
+			await context.workspaceState.update(BACKEND_PROBE_VALUE_KEY, undefined);
+			await context.workspaceState.update(BACKEND_PROBE_AT_KEY, 0);
+			throw first;
+		}
+	}
 }
 
 async function ensure_project_selection_prompt(
@@ -2423,12 +3488,11 @@ async function run_nvm(
 			: await exec_async(ps, { timeout: timeout_ms });
 		return `${stdout}\n${stderr}`;
 	}
-	const shell = process.env.SHELL ?? '/bin/bash';
-	const escaped = command.replace(/"/g, '\\"');
-	const sh = `${shell} -lc "${escaped}"`;
+	const script = `${unix_nvm_init_bash()}; ${command}`;
+	const full = `/bin/bash -lc ${JSON.stringify(script)}`;
 	const { stdout, stderr } = signal
-		? await exec_async_cancellable(sh, { timeout: timeout_ms, signal })
-		: await exec_async(sh, { timeout: timeout_ms });
+		? await exec_async_cancellable(full, { timeout: timeout_ms, env: process.env, signal })
+		: await exec_async(full, { timeout: timeout_ms, env: process.env });
 	return `${stdout}\n${stderr}`;
 }
 
@@ -2439,8 +3503,9 @@ async function run_n(args: string, timeout_ms = DEFAULT_SHELL_TIMEOUT_MS, signal
 	const shell = process.env.SHELL ?? '/bin/bash';
 	const cmd = `n ${args}`.trim();
 	const full = `${shell} -lc ${JSON.stringify(cmd)}`;
+	const env = n_process_env();
 	const { stdout, stderr } = signal
-		? await exec_async_cancellable(full, { timeout: timeout_ms, env: process.env, signal })
-		: await exec_async(full, { timeout: timeout_ms, env: process.env });
+		? await exec_async_cancellable(full, { timeout: timeout_ms, env, signal })
+		: await exec_async(full, { timeout: timeout_ms, env });
 	return `${stdout}\n${stderr}`;
 }

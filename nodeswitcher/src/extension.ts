@@ -8,9 +8,11 @@ import {
 	open_version_picker,
 	refresh_status_bar,
 	repaint_status_bar_for_display_settings,
+	retry_last_failed_node_switch,
 	run_resolve_project_node_mismatch_command,
 	STATUS_BAR_ICON
 } from './node_backends';
+import { open_remediation_webview } from './remediation_webview';
 import { registerNodeSidebar } from './node_sidebar';
 
 const switch_command_id = 'nodeswitcher.switchNodeVersion';
@@ -73,6 +75,27 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(
 		vscode.commands.registerCommand('nodeswitcher.chooseProjectNodeMismatch', async () => {
 			await run_resolve_project_node_mismatch_command(context, status_item);
+		})
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('nodeswitcher.retryLastNodeSwitch', async () => {
+			await retry_last_failed_node_switch(context, status_item);
+		})
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('nodeswitcher.openRemediationPanel', async (err?: unknown, scenario?: unknown) => {
+			const msg = typeof err === 'string' ? err : '';
+			const scen =
+				scenario === 'n_no_active' || scenario === 'permission' || scenario === 'general' ? scenario : 'general';
+			open_remediation_webview(context, msg, scen);
+		})
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('nodeswitcher.runInstallerRemediation', async () => {
+			open_remediation_webview(context);
 		})
 	);
 

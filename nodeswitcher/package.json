@@ -1,7 +1,7 @@
 {
   "name": "nodeswitcher",
   "displayName": "nodeswitcher",
-  "description": "Switch and install Node.js versions from the status bar using n (macOS/Linux) or NVM (nvm-windows on Windows, nvm-sh on Unix). Windows uses NVM only; Unix prefers n when both n and nvm are installed.",
+  "description": "Switch and install Node.js versions from the status bar using n or nvm-sh on macOS/Linux/Unix (Homebrew-friendly nvm paths and common Linux layouts) or nvm-windows on Windows. Windows uses NVM only; Unix prefers n when both n and nvm are installed.",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.105.0"
@@ -60,6 +60,11 @@
           "minimum": 10,
           "maximum": 2000,
           "description": "Maximum number of rows in “Other available versions” (newest first). Higher values may slow the picker."
+        },
+        "nodeswitcher.nPrefix": {
+          "type": "string",
+          "default": "",
+          "description": "Directory used as N_PREFIX for the n version manager when NodeSwitcher runs n (subprocesses and integrated terminals). Use a user-writable path (e.g. ~/.n) if /usr/local/n is not writable. Match your shell profile if you set N_PREFIX there. Reload after changing."
         }
       }
     },
@@ -83,6 +88,18 @@
       {
         "command": "nodeswitcher.chooseProjectNodeMismatch",
         "title": "NodeSwitcher: Resolve Project Node Version Mismatch"
+      },
+      {
+        "command": "nodeswitcher.retryLastNodeSwitch",
+        "title": "NodeSwitcher: Retry Last Node Version Switch"
+      },
+      {
+        "command": "nodeswitcher.openRemediationPanel",
+        "title": "NodeSwitcher: Open Installer Repair Panel"
+      },
+      {
+        "command": "nodeswitcher.runInstallerRemediation",
+        "title": "NodeSwitcher: Run Automatic Installer Repair (n / nvm)"
       },
       {
         "command": "nodeswitcher.sidebarApplyVersion",

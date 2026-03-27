@@ -74,6 +74,9 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 	private view: vscode.TreeView<SidebarElement> | undefined;
 
 	private install_progress: { version: string; phase: InstallPhase } | undefined;
+	private project_switch_state: { state: 'idle' | 'pending' | 'success' | 'error'; version?: string } = {
+		state: 'idle'
+	};
 
 	constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -120,6 +123,7 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 		this.switchIncludeAvailable = false;
 		this.switch_list_load_error = undefined;
 		this.switch_list_load_in_flight = false;
+		this.project_switch_state = { state: 'idle' };
 	}
 
 	on_status_bar_clicked(): void {
@@ -133,6 +137,11 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 	refresh(): void {
 		this.updateViewTitle();
 		this._onDidChangeTreeData.fire();
+	}
+
+	setProjectSwitchState(state: 'idle' | 'pending' | 'success' | 'error', version?: string): void {
+		this.project_switch_state = { state, version };
+		this.refresh();
 	}
 
 	private updateViewTitle(): void {
@@ -241,14 +250,37 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 			}
 			case 'switch_to_project': {
 				const item = new vscode.TreeItem(element.label, vscode.TreeItemCollapsibleState.None);
-				item.description = element.description;
-				item.tooltip = element.tooltip;
-				item.iconPath = vscode.Uri.file(
-					path.join(this.context.extensionPath, 'media', 'picker', 'project-switch.svg')
-				);
+				if (this.project_switch_state.state === 'pending') {
+					const vv = node_version_display_v(this.project_switch_state.version ?? element.entry.version);
+					item.label = `Switching to ${vv}...`;
+					item.description = 'Applying project-pinned Node version';
+					item.tooltip = `Switching active Node to ${vv}`;
+					item.iconPath = new vscode.ThemeIcon('sync~spin');
+					item.command = undefined;
+					item.contextValue = 'nodeswitcher.switchToProject.pending';
+					return item;
+				}
+				if (this.project_switch_state.state === 'success') {
+					const vv = node_version_display_v(this.project_switch_state.version ?? element.entry.version);
+					item.label = 'Project node version active';
+					item.description = vv;
+					item.tooltip = `Project-pinned version ${vv} is now active.`;
+					item.iconPath = new vscode.ThemeIcon('check');
+				} else if (this.project_switch_state.state === 'error') {
+					item.label = 'Switch to project node version (retry)';
+					item.description = element.description;
+					item.tooltip = 'Previous attempt failed. Click to retry switching to the project-pinned version.';
+					item.iconPath = new vscode.ThemeIcon('warning');
+				} else {
+					item.description = element.description;
+					item.tooltip = element.tooltip;
+					item.iconPath = vscode.Uri.file(
+						path.join(this.context.extensionPath, 'media', 'picker', 'project-switch.svg')
+					);
+				}
 				item.contextValue = 'nodeswitcher.switchToProject';
 				item.command = {
-					command: 'nodeswitcher.sidebarApplyVersion',
+					command: 'nodeswitcher.sidebarApplyProjectVersion',
 					title: 'Switch to project Node version',
 					arguments: [element.backend, element.entry]
 				};
@@ -494,6 +526,25 @@ export function registerNodeSidebar(
 				provider.clearInstallProgress();
 			}
 		})
+	);
+	context.subscriptions.push(
+		vscode.commands.registerCommand(
+			'nodeswitcher.sidebarApplyProjectVersion',
+			async (backend: NodeBackend, entry: VersionEntry) => {
+				provider.setProjectSwitchState('pending', entry.version);
+				try {
+					await apply_picked_version_entry(context, status_item, backend, entry, (phase, v) => {
+						provider.setInstallProgress(v, phase);
+					});
+					provider.setProjectSwitchState('success', entry.version);
+				} catch (error) {
+					provider.setProjectSwitchState('error', entry.version);
+					throw error;
+				} finally {
+					provider.clearInstallProgress();
+				}
+			}
+		)
 	);
 	context.subscriptions.push(
 		vscode.commands.registerCommand('nodeswitcher.sidebarToggleAvailable', async (backend: NodeBackend) => {

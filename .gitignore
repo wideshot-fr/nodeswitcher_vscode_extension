@@ -11,3 +11,4 @@ nodeswitcher/dist/
 nodeswitcher/node_modules/
 nodeswitcher/.vscode-test/
 nodeswitcher/*.vsix
+nodeswitcher/.nodeswitcher
