@@ -6,6 +6,17 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-03-28
+
+- **What's New**: On update, a notification appears with a "What's New" button opening a changelog webview. Command palette: `NodeSwitcher: Show What's New`.
+- **Picker**: Installed and other-available accordions are now mutually exclusive — opening one collapses the other automatically.
+- **Picker**: Hovering a version row shows a compact tooltip with release channel (Current / Active LTS / Maintenance LTS / EOL) when known.
+- **Picker load on Windows**: Fixed spinner stuck on "Loading installed versions" — release index fetch no longer blocks the picker from rendering.
+- **Mismatch UX**: On project version mismatch, a one-time notification offers "Switch to project version" or "Open picker" without spamming every refresh.
+- **Mismatch UX**: Status bar mismatch wording is now plain English (e.g. "Node 22 differs from project (>=24)").
+- **Picker blue row**: "Project Node version" row now reads "Click to switch to project node version".
+- **Release labels**: Other available versions no longer show fake Current/LTS labels — tags come from real lifecycle dates (endoflife.date API).
+
 ## [0.1.2] - 2026-03-28
 
 - **Docs**: README hero image uses hosted **PNG** (`readme-logo.png`); `@vscode/vsce` rejects SVG in README for Marketplace packaging.

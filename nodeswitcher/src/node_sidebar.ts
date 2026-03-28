@@ -356,10 +356,7 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 
 	private async fillSwitchCacheAsync(gen: number): Promise<void> {
 		try {
-			const [loaded] = await Promise.all([
-				load_switcher_picker_entries(this.context),
-				ensure_node_release_channels_loaded()
-			]);
+			const loaded = await load_switcher_picker_entries(this.context);
 			if (gen !== this.switch_list_load_generation) {
 				return;
 			}
@@ -371,6 +368,12 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 				this.switch_list_load_error = undefined;
 				this.switchBackend = loaded.backend;
 				this.switchChildrenCache = loaded.entries;
+				void ensure_node_release_channels_loaded().then(() => {
+					if (gen !== this.switch_list_load_generation) {
+						return;
+					}
+					this._onDidChangeTreeData.fire(this.el_switch_parent);
+				});
 			}
 		} catch {
 			if (gen !== this.switch_list_load_generation) {

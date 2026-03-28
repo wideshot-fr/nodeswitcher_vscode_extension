@@ -1362,8 +1362,7 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 					[raw_entries, live, pin] = await Promise.all([
 						get_local_versions(b, { omitCurrentProbe: true }),
 						resolve_live_version_for_ui(context, b),
-						get_project_pinned_from_disk(),
-						ensure_node_release_channels_loaded()
+						get_project_pinned_from_disk()
 					]);
 				} catch (e) {
 					if (!picker_closed) {
@@ -1423,18 +1422,38 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 				quick_pick.placeholder = tool_hint
 					? `Select a Node version · ${tool_hint} · ${host_platform_label()}`
 					: `Select a Node version · ${host_platform_label()}`;
-				quick_pick.items = build_version_picker_items(
-					current_entries,
-					backend,
-					include_available,
-					include_installed,
-					project_pin,
-					context.extensionPath,
-					false,
-					true
-				);
-			} finally {
 				if (!picker_closed) {
+					quick_pick.busy = false;
+				}
+				if (!picker_closed) {
+					quick_pick.items = build_version_picker_items(
+						current_entries,
+						backend,
+						include_available,
+						include_installed,
+						project_pin,
+						context.extensionPath,
+						false,
+						true
+					);
+				}
+				void ensure_node_release_channels_loaded().then(() => {
+					if (picker_closed || backend === undefined || !loaded) {
+						return;
+					}
+					quick_pick.items = build_version_picker_items(
+						current_entries,
+						backend,
+						include_available,
+						include_installed,
+						project_pin,
+						context.extensionPath,
+						false,
+						true
+					);
+				});
+			} finally {
+				if (!picker_closed && quick_pick.busy) {
 					quick_pick.busy = false;
 				}
 			}
@@ -2358,8 +2377,7 @@ export async function load_switcher_picker_entries(
 	try {
 		[raw, live] = await Promise.all([
 			get_local_versions(backend, { omitCurrentProbe: true }),
-			resolve_live_version_for_ui(context, backend),
-			ensure_node_release_channels_loaded()
+			resolve_live_version_for_ui(context, backend)
 		]);
 	} catch (e) {
 		report_nodeswitcher_failure(

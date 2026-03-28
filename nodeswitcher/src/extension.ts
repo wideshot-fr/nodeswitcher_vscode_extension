@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { maybe_show_changelog_on_update, show_changelog_webview } from './changelog_webview';
 import {
 	apply_nodeswitcher_status_bar_style,
 	apply_nodeswitcher_status_bar_visibility,
@@ -107,6 +108,12 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand('nodeswitcher.showChangelog', () => {
+			show_changelog_webview(context);
+		})
+	);
+
+	context.subscriptions.push(
 		vscode.window.onDidChangeWindowState((state) => {
 			if (state.focused) {
 				void refresh_status_bar(context, status_item, false);
@@ -115,6 +122,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 
 	void (async () => {
+		maybe_show_changelog_on_update(context);
 		maybe_show_install_requirements_webview(context);
 		await check_and_prompt_required_runtime(context);
 		try {
