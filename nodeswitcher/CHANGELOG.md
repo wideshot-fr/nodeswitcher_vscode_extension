@@ -6,6 +6,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-03-28
+
+- **Docs**: README hero image uses hosted **PNG** (`readme-logo.png`); `@vscode/vsce` rejects SVG in README for Marketplace packaging.
+- **Tooling**: `publish:vsix` / `release` scripts; root `README`; `LICENSE` (Wideshot, Roman MERCK); `AGENTS.md` gitignored.
+
 ## [0.1.1]
 
 - **Repository**: Canonical GitHub URL is [wideshot-fr/nodeswitcher_vscode_extension](https://github.com/wideshot-fr/nodeswitcher_vscode_extension); `package.json` `repository.url` and documentation updated for Marketplace / `vsce` link resolution.

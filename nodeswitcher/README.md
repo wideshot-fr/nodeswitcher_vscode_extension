@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher-logo.svg" width="120" height="120" alt="NodeSwitcher logo" />
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/readme-logo.png" width="120" height="120" alt="NodeSwitcher logo" />
 </p>
 
 # NodeSwitcher
@@ -239,9 +239,11 @@ npm run package    # production webpack only
 npm run build:release   # readme:logo → icons:build → package (same as vscode:prepublish)
 ```
 
+- **One-shot release (e.g. manual Marketplace upload):** from `nodeswitcher/`, run **`npm run release -- patch`** (or **`minor`** / **`major`**). That runs **lint** → **`npm version`** bump → inserts a **`CHANGELOG.md`** section (`Release X.Y.Z.`, edit later if you want) → **`publish:vsix`** → **`git add -A`** at **repository root** (every tracked change is included—clean up or commit beforehand) → **commit** `chore(release): nodeswitcher vX.Y.Z` → **annotated tag** `vX.Y.Z` → **`git push`** branch and tag. Append **`--no-push`** to stop before push. Then upload the VSIX from **`publishBuild/`** (filename = `name` + `version` from **`package.json`**).
+
 - **Branding assets**: `media/logo.svg` is the green gradient mark (activity bar / views). `media/logo-status-glyph.svg` is a `currentColor` shape for the status bar font (tints with `STATUS_BAR_FOREGROUND`, usually white). Run `npm run readme:logo` to regenerate `media/readme-logo.png` and `media/extension-icon.png` (128px store icon from `logo.svg`; both run in `vscode:prepublish`).
 - **Icons**: `npm run icons:build` regenerates the status bar font from SVG (see `scripts/build-status-font.mjs`).
-- **VSIX**: from `nodeswitcher/`, run `npx @vscode/vsce package` after a successful `npm run package` and a non-template README.
+- **VSIX**: **`@vscode/vsce`** names the artifact **`{name}-{version}.vsix`** using **`package.json`** `name` and `version` only (no separate “build version”). Run **`npm run publish:vsix`** to produce **`publishBuild/nodeswitcher-<version>.vsix`** after prepublish. Plain `npx @vscode/vsce package` writes the same filename to the current directory.
 
 ---
 

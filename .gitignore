@@ -1,4 +1,5 @@
 # Repo root (if you add tooling or packages here)
+AGENTS.md
 out/
 dist/
 node_modules/
@@ -10,5 +11,7 @@ nodeswitcher/out/
 nodeswitcher/dist/
 nodeswitcher/node_modules/
 nodeswitcher/.vscode-test/
+nodeswitcher/publishBuild/
+nodeswitcher/publishedBuild/
 nodeswitcher/*.vsix
 nodeswitcher/.nodeswitcher
