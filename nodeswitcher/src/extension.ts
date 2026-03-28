@@ -12,6 +12,7 @@ import {
 	run_resolve_project_node_mismatch_command,
 	STATUS_BAR_ICON
 } from './node_backends';
+import { maybe_show_install_requirements_webview, show_install_requirements_webview } from './requirements_webview';
 import { open_remediation_webview } from './remediation_webview';
 import { registerNodeSidebar } from './node_sidebar';
 
@@ -100,6 +101,12 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 
 	context.subscriptions.push(
+		vscode.commands.registerCommand('nodeswitcher.showInstallRequirements', () => {
+			show_install_requirements_webview(context);
+		})
+	);
+
+	context.subscriptions.push(
 		vscode.window.onDidChangeWindowState((state) => {
 			if (state.focused) {
 				void refresh_status_bar(context, status_item, false);
@@ -108,6 +115,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 
 	void (async () => {
+		maybe_show_install_requirements_webview(context);
 		await check_and_prompt_required_runtime(context);
 		try {
 			await initialize_status(context, status_item);

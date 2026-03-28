@@ -1,10 +1,17 @@
 {
   "name": "nodeswitcher",
+  "publisher": "wideshot",
   "displayName": "nodeswitcher",
   "description": "Switch and install Node.js versions from the status bar using n or nvm-sh on macOS/Linux/Unix (Homebrew-friendly nvm paths and common Linux layouts) or nvm-windows on Windows. Windows uses NVM only; Unix prefers n when both n and nvm are installed.",
-  "version": "0.0.1",
+  "version": "0.0.3",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rmproton/nodeswitcher_vscode_extension.git",
+    "directory": "nodeswitcher"
+  },
   "engines": {
-    "vscode": "^1.105.0"
+    "vscode": "^1.110.0"
   },
   "categories": [
     "Other"
@@ -13,6 +20,7 @@
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
+  "icon": "media/extension-icon.png",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -102,6 +110,10 @@
         "title": "NodeSwitcher: Run Automatic Installer Repair (n / nvm)"
       },
       {
+        "command": "nodeswitcher.showInstallRequirements",
+        "title": "NodeSwitcher: Show install requirements"
+      },
+      {
         "command": "nodeswitcher.sidebarApplyVersion",
         "title": "NodeSwitcher: Apply Version From Sidebar"
       },
@@ -185,7 +197,7 @@
     ],
     "icons": {
       "nodeswitcher-logo": {
-        "description": "NodeSwitcher logo (from media/logo.svg) for status bar",
+        "description": "NodeSwitcher status bar glyph (from media/logo-status-glyph.svg, currentColor)",
         "default": {
           "fontPath": "media/status-font/nodeswitcher-status.ttf",
           "fontCharacter": "\\ea01"
@@ -202,7 +214,8 @@
   },
   "scripts": {
     "icons:build": "node scripts/build-status-font.mjs",
-    "vscode:prepublish": "npm run icons:build && npm run package",
+    "readme:logo": "node scripts/export-readme-logo.mjs",
+    "vscode:prepublish": "npm run readme:logo && npm run icons:build && npm run package",
     "compile": "webpack",
     "watch": "webpack --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
@@ -213,6 +226,7 @@
     "test": "vscode-test"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/semver": "^7.7.1",

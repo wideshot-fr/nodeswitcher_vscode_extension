@@ -10,7 +10,7 @@ const root = path.join(__dirname, '..');
 const glyphs = [
 	{
 		name: 'nodeswitcher-logo',
-		svgPath: path.join(root, 'media', 'logo.svg'),
+		svgPath: path.join(root, 'media', 'logo-status-glyph.svg'),
 		codepoint: 0xea01
 	},
 	{
