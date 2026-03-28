@@ -3,11 +3,11 @@
   "publisher": "wideshot",
   "displayName": "nodeswitcher",
   "description": "Switch and install Node.js versions from the status bar using n or nvm-sh on macOS/Linux/Unix (Homebrew-friendly nvm paths and common Linux layouts) or nvm-windows on Windows. Windows uses NVM only; Unix prefers n when both n and nvm are installed.",
-  "version": "0.0.3",
+  "version": "0.1.1",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/rmproton/nodeswitcher_vscode_extension.git",
+    "url": "https://github.com/wideshot-fr/nodeswitcher_vscode_extension.git",
     "directory": "nodeswitcher"
   },
   "engines": {
@@ -215,7 +215,8 @@
   "scripts": {
     "icons:build": "node scripts/build-status-font.mjs",
     "readme:logo": "node scripts/export-readme-logo.mjs",
-    "vscode:prepublish": "npm run readme:logo && npm run icons:build && npm run package",
+    "build:release": "npm run readme:logo && npm run icons:build && npm run package",
+    "vscode:prepublish": "npm run build:release",
     "compile": "webpack",
     "watch": "webpack --watch",
     "package": "webpack --mode production --devtool hidden-source-map",

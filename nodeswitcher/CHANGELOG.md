@@ -6,6 +6,17 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.1.1]
+
+- **Repository**: Canonical GitHub URL is [wideshot-fr/nodeswitcher_vscode_extension](https://github.com/wideshot-fr/nodeswitcher_vscode_extension); `package.json` `repository.url` and documentation updated for Marketplace / `vsce` link resolution.
+- **Docs**: Added a root-level [README](../README.md) for the monorepo layout and links to `nodeswitcher/`; contributing / clone hints point at the org repo.
+- **Meta**: MIT `LICENSE` copyright holder set to **wideshot-fr**; `.gitignore` ignores `publishBuild/` and `publishedBuild/` under `nodeswitcher/`.
+
+## [0.1.0]
+
+- **Build**: Added `npm run build:release` (`readme:logo` → `icons:build` → production `package`); `vscode:prepublish` delegates to it so local release builds and `vsce package` / `vsce publish` share one pipeline.
+- **Docs**: README Development section documents `build:release` next to compile, lint, and package.
+
 ## [0.0.3]
 
 - **Docs**: Added a **Roadmap and platform testing** section to the README (macOS Sequoia vs legacy, Linux and Windows coverage, planned improvements).

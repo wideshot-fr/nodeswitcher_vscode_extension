@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="media/readme-logo.png" width="120" height="120" alt="NodeSwitcher logo" />
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher-logo.svg" width="120" height="120" alt="NodeSwitcher logo" />
 </p>
 
 # NodeSwitcher
@@ -235,7 +235,8 @@ cd nodeswitcher
 npm install
 npm run compile    # webpack dev build
 npm run lint       # eslint
-npm run package    # production webpack (used before vsce)
+npm run package    # production webpack only
+npm run build:release   # readme:logo → icons:build → package (same as vscode:prepublish)
 ```
 
 - **Branding assets**: `media/logo.svg` is the green gradient mark (activity bar / views). `media/logo-status-glyph.svg` is a `currentColor` shape for the status bar font (tints with `STATUS_BAR_FOREGROUND`, usually white). Run `npm run readme:logo` to regenerate `media/readme-logo.png` and `media/extension-icon.png` (128px store icon from `logo.svg`; both run in `vscode:prepublish`).
