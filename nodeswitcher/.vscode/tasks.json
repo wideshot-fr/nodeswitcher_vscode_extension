@@ -4,13 +4,13 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"type": "npm",
-			"script": "watch",
-			"problemMatcher": "$ts-webpack-watch",
-			"isBackground": true,
+			"label": "npm: compile",
+			"type": "shell",
+			"command": "C:\\nvm4w\\nodejs\\npm.cmd",
+			"args": ["run", "compile"],
+			"problemMatcher": "$ts-webpack",
 			"presentation": {
-				"reveal": "never",
-				"group": "watchers"
+				"reveal": "silent"
 			},
 			"group": {
 				"kind": "build",

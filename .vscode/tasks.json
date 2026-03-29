@@ -1,18 +1,23 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "nodeswitcher: compile",
-            "type": "shell",
-            "command": "npm run compile",
-            "windows": {
-                "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"$env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User'); Set-Location -LiteralPath '${workspaceFolder}/nodeswitcher'; npm run compile; exit $LASTEXITCODE\""
-            },
-            "options": {
-                "cwd": "${workspaceFolder}/nodeswitcher"
-            },
-            "group": "build",
-            "problemMatcher": []
-        }
-    ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "npm: compile - nodeswitcher",
+			"type": "shell",
+			"command": "C:\\nvm4w\\nodejs\\npm.cmd",
+			"args": ["run", "compile"],
+			"options": {
+				"cwd": "${workspaceFolder}/nodeswitcher"
+			},
+			"problemMatcher": [],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "shared"
+			}
+		}
+	]
 }

@@ -125,6 +125,7 @@ const MISMATCH_NOTICE_FP_KEY = 'nodeswitcher.projectMismatchNoticeFingerprint';
 const PROBE_TTL_MS = 60_000;
 const PROBE_CACHE_VERIFY_AFTER_MS = 25_000;
 const FAST_SHELL_TIMEOUT_MS = 1_800;
+const LIST_SHELL_TIMEOUT_MS = 15_000;
 const DEFAULT_SHELL_TIMEOUT_MS = 120_000;
 const BACKEND_RECONCILE_OFFER_COOLDOWN_MS = 120_000;
 const PROJECT_PROMPTED_KEY = 'nodeswitcher.projectPrompted';
@@ -2531,7 +2532,7 @@ function is_n_missing_versions_tree_output(raw: string): boolean {
 
 export async function get_installed_versions_with_raw(backend: NodeBackend): Promise<{ versions: string[]; raw: string }> {
 	if (backend === 'n') {
-		const raw_full = await run_n('ls', DEFAULT_SHELL_TIMEOUT_MS);
+		const raw_full = await run_n('ls', LIST_SHELL_TIMEOUT_MS);
 		const raw_clean = sanitize_n_ls_raw(raw_full);
 		const versions = parse_versions(raw_clean.length > 0 ? raw_clean : raw_full);
 		if (versions.length === 0 && is_n_missing_versions_tree_output(raw_full)) {
@@ -2540,7 +2541,7 @@ export async function get_installed_versions_with_raw(backend: NodeBackend): Pro
 		const raw_for_ui = raw_clean.trim() ? raw_clean : raw_full;
 		return { versions, raw: raw_for_ui };
 	}
-	const raw = await run_nvm_with_fallback(['list', 'ls'], DEFAULT_SHELL_TIMEOUT_MS);
+	const raw = await run_nvm_with_fallback(['list', 'ls'], LIST_SHELL_TIMEOUT_MS);
 	return { versions: parse_versions(raw), raw };
 }
 
@@ -3498,14 +3499,16 @@ async function run_nvm(
 	timeout_ms = DEFAULT_SHELL_TIMEOUT_MS,
 	signal?: AbortSignal
 ): Promise<string> {
-	const command = `nvm ${args}`;
 	if (process.platform === 'win32') {
-		const ps = `powershell -NoProfile -Command "${command}"`;
+		const nvm_home = process.env.NVM_HOME;
+		const nvm_exe = nvm_home ? path.join(nvm_home, 'nvm.exe') : 'nvm';
+		const cmd = `"${nvm_exe}" ${args}`;
 		const { stdout, stderr } = signal
-			? await exec_async_cancellable(ps, { timeout: timeout_ms, signal })
-			: await exec_async(ps, { timeout: timeout_ms });
+			? await exec_async_cancellable(cmd, { timeout: timeout_ms, signal })
+			: await exec_async(cmd, { timeout: timeout_ms });
 		return `${stdout}\n${stderr}`;
 	}
+	const command = `nvm ${args}`;
 	const script = `${unix_nvm_init_bash()}; ${command}`;
 	const full = `/bin/bash -lc ${JSON.stringify(script)}`;
 	const { stdout, stderr } = signal

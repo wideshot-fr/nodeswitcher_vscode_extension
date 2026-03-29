@@ -6,6 +6,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-03-29
+
+- **Fix**: Extension now loads correctly in Cursor and VS Code — engine requirement lowered from `^1.110.0` to `^1.95.0`.
+- **Fix (Windows)**: Picker dropdown now loads installed versions almost instantly — nvm is called directly via `NVM_HOME/nvm.exe` instead of through PowerShell (38x faster).
+- **Fix (Windows)**: Version list timeout reduced to 15 s (was 2 min) so failures surface quickly as an error instead of an indefinite spinner.
+
 ## [0.1.3] - 2026-03-28
 
 - **What's New**: On update, a notification appears with a "What's New" button opening a changelog webview. Command palette: `NodeSwitcher: Show What's New`.
