@@ -6,6 +6,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-03-29
+
+- **Status bar**: Keeps the version picker **clickable** after switches, refresh, loading states, and while the Quick Pick is open — `command` is re-bound whenever the item is repainted; picker no longer clears the tooltip to `undefined` (fixes missing pointer / dead clicks in VS Code / Cursor).
+- **Picker (aligned / Windows layout)**: **Shorter rows** — version lines omit redundant multi-line `detail` when the label already shows version + release channel; footer and project-pin rows use compact one-line hints. Sidebar still uses full detail for tree hovers.
+- **Terminals**: For **3 minutes** after you change Node from NodeSwitcher, **each new integrated terminal** prints a short reminder that it may still be on the **previous** Node (PowerShell `Write-Host` on Windows, `echo` elsewhere).
+
 ## [0.1.6] - 2026-03-29
 
 - **nvm**: Switching between **already installed** versions no longer runs `nvm use`, so nvm’s global “current” symlink / default is not changed for every terminal on the machine.

@@ -8,16 +8,17 @@ import {
 	initialize_status,
 	open_version_picker,
 	refresh_status_bar,
+	register_terminal_stale_notice_listener,
 	repaint_status_bar_for_display_settings,
 	retry_last_failed_node_switch,
 	run_resolve_project_node_mismatch_command,
-	STATUS_BAR_ICON
+	STATUS_BAR_ICON,
+	SWITCH_NODE_VERSION_COMMAND_ID
 } from './node_backends';
 import { maybe_show_install_requirements_webview, show_install_requirements_webview } from './requirements_webview';
 import { open_remediation_webview } from './remediation_webview';
 import { registerNodeSidebar } from './node_sidebar';
 
-const switch_command_id = 'nodeswitcher.switchNodeVersion';
 const refresh_command_id = 'nodeswitcher.refreshNodeVersions';
 
 let status_item: vscode.StatusBarItem;
@@ -31,6 +32,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	apply_nodeswitcher_status_bar_style(status_item);
 	apply_nodeswitcher_status_bar_visibility(status_item);
 	context.subscriptions.push(status_item);
+	register_terminal_stale_notice_listener(context);
 
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration((e) => {
@@ -55,7 +57,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand(switch_command_id, async () => {
+		vscode.commands.registerCommand(SWITCH_NODE_VERSION_COMMAND_ID, async () => {
 			await open_version_picker(context, status_item);
 		})
 	);
@@ -128,7 +130,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		try {
 			await initialize_status(context, status_item);
 		} finally {
-			status_item.command = switch_command_id;
+			status_item.command = SWITCH_NODE_VERSION_COMMAND_ID;
 		}
 	})();
 }
