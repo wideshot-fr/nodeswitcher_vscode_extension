@@ -239,6 +239,7 @@
     "watch": "webpack --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
     "publish:vsix": "node scripts/package-vsix.mjs",
+    "publish:open-vsx": "node scripts/publish-open-vsx.mjs",
     "package:vsix": "node scripts/package-vsix.mjs",
     "release": "node scripts/release.mjs",
     "compile-tests": "tsc -p . --outDir out",

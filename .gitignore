@@ -1,6 +1,12 @@
 # Repo root (if you add tooling or packages here)
 AGENTS.md
 .nodeswitcher
+
+# Local secrets — never commit (root and extension package)
+.env
+.env.local
+nodeswitcher/.env
+nodeswitcher/.env.local
 out/
 dist/
 node_modules/

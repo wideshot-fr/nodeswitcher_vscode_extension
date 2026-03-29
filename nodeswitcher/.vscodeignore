@@ -5,6 +5,8 @@ node_modules/**
 src/**
 scripts/**
 .nodeswitcher
+.env
+.env.local
 .gitignore
 .yarnrc
 webpack.config.js
