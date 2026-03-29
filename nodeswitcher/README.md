@@ -43,8 +43,6 @@ The extension detects what is available on your `PATH`, runs the right CLI in a 
 
 ## Screenshots
 
-All images below are served from **`https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/`** (same host as the hero image above).
-
 ### Version picker (Quick Pick)
 
 Click the **Node** item in the status bar to open the picker: installed versions, optional remote list, and project pin when applicable.
