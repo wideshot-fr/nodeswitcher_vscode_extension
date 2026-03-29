@@ -10,6 +10,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - **Sidebar — version from `package.json`**: Detect or suggest the Node version the workspace needs by reading **`package.json`** (e.g. `engines.node`, and dependency-driven constraints where feasible), and surface that in the sidebar so you can align the active version quickly.
 
+## [0.1.15] - 2026-03-29
+
+- **Docs**: README **Contact** uses bundled **`media/wideshot-logo_white.png`** instead of a remote Wideshot logo URL (reliable Marketplace / Open VSX README rendering).
+
 ## [0.1.14] - 2026-03-29
 
 - **Packaging / hygiene**: `.vscodeignore` excludes `.env` and `.env.local` so the VSIX never bundles local secrets; root and `nodeswitcher/` `.gitignore` list common env filenames.
