@@ -10,6 +10,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - **Sidebar — version from `package.json`**: Detect or suggest the Node version the workspace needs by reading **`package.json`** (e.g. `engines.node`, and dependency-driven constraints where feasible), and surface that in the sidebar so you can align the active version quickly.
 
+## [0.1.16] - 2026-03-29
+
+- **Docs**: README **Contact** logo uses hosted **`logo-white.png`** on the NodeSwitcher S3 assets path.
+
 ## [0.1.15] - 2026-03-29
 
 - **Docs**: README **Contact** uses bundled **`media/wideshot-logo_white.png`** instead of a remote Wideshot logo URL (reliable Marketplace / Open VSX README rendering).

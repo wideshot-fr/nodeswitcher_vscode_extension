@@ -168,7 +168,7 @@ Selecting a version from the picker can **persist** the choice into `.nodeswitch
 ## Contact
 
 <p align="left">
-  <img src="media/wideshot-logo_white.png" alt="Wideshot" width="168" />
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/logo-white.png" alt="Wideshot" width="168" />
 </p>
 
 **[contact@wideshot.dev](mailto:contact@wideshot.dev)**
