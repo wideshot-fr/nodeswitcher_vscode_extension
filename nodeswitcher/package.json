@@ -3,7 +3,7 @@
   "publisher": "wideshot",
   "displayName": "nodeswitcher",
   "description": "Switch and install Node.js versions from the status bar using n or nvm-sh on macOS/Linux/Unix (Homebrew-friendly nvm paths and common Linux layouts) or nvm-windows on Windows. Windows uses NVM only; Unix prefers n when both n and nvm are installed.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "license": "MIT",
   "repository": {
     "type": "git",

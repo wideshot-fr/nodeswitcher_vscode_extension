@@ -6,6 +6,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-03-29
+
+- **nvm**: Switching between **already installed** versions no longer runs `nvm use`, so nvm’s global “current” symlink / default is not changed for every terminal on the machine.
+- **PATH**: Node is resolved from the version install directory (`NVM_HOME\\v*\\node.exe` or nvm-sh `versions/node/...`) and prepended for **this workspace’s** integrated terminals only; removed clearing `PATH` on the extension’s unscoped environment collection.
+- **UX**: Success message clarifies **new integrated terminals in this workspace**.
+
 ## [0.1.5] - 2026-03-29
 
 - **Fix**: Version picker no longer uses the proposed `QuickPickItem.tooltip` API (which threw in normal VS Code / Cursor and left the dropdown stuck on “Loading…”). Row hints now use stable `QuickPickItem.detail` instead; sidebar tree hovers still show the same text.

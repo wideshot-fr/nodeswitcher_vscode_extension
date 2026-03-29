@@ -956,7 +956,6 @@ export async function apply_node_environment(
 	const node_exe = await resolve_node_executable(safe, backend, already_switched);
 	const bin_dir = path.dirname(node_exe.trim());
 	const sep = path.delimiter;
-	context.environmentVariableCollection.delete('PATH');
 	const scoped = get_nodeswitcher_terminal_env_collection(context);
 	scoped.delete('PATH');
 	scoped.prepend('PATH', `${bin_dir}${sep}`, { applyAtProcessCreation: true });
@@ -1055,34 +1054,41 @@ async function resolve_node_executable(version: string, backend: NodeBackend, al
 		}
 		return bin;
 	}
-	if (process.platform === 'win32') {
-		const use_prefix = already_switched ? '' : `nvm use ${version} | Out-Null; `;
-		const ps = `${use_prefix}(Get-Command node -ErrorAction Stop).Source`;
-		const { stdout } = await exec_async(`powershell -NoProfile -Command "${ps}"`, {
+	if (backend === 'nvm') {
+		const disk_path = await resolve_installed_node_executable('nvm', version);
+		if (disk_path) {
+			return disk_path;
+		}
+		if (process.platform === 'win32') {
+			const use_prefix = already_switched ? '' : `nvm use ${version} | Out-Null; `;
+			const ps = `${use_prefix}(Get-Command node -ErrorAction Stop).Source`;
+			const { stdout } = await exec_async(`powershell -NoProfile -Command "${ps}"`, {
+				timeout: 120000,
+				env: process.env
+			});
+			const line = stdout
+				.trim()
+				.split(/\r?\n/)
+				.map((s) => s.trim())
+				.filter(Boolean)
+				.pop();
+			if (!line) {
+				throw new Error('Could not resolve node.exe after nvm use');
+			}
+			return line;
+		}
+		const script = `${unix_nvm_init_bash()}; nvm use ${version} >/dev/null || exit 1; command -v node`;
+		const { stdout } = await exec_async(`/bin/bash -lc ${JSON.stringify(script)}`, {
 			timeout: 120000,
 			env: process.env
 		});
-		const line = stdout
-			.trim()
-			.split(/\r?\n/)
-			.map((s) => s.trim())
-			.filter(Boolean)
-			.pop();
-		if (!line) {
-			throw new Error('Could not resolve node.exe after nvm use');
+		const node_path = stdout.trim().split('\n').filter(Boolean).pop();
+		if (!node_path) {
+			throw new Error('Could not resolve node after nvm use');
 		}
-		return line;
+		return node_path;
 	}
-	const script = `${unix_nvm_init_bash()}; nvm use ${version} >/dev/null || exit 1; command -v node`;
-	const { stdout } = await exec_async(`/bin/bash -lc ${JSON.stringify(script)}`, {
-		timeout: 120000,
-		env: process.env
-	});
-	const node_path = stdout.trim().split('\n').filter(Boolean).pop();
-	if (!node_path) {
-		throw new Error('Could not resolve node after nvm use');
-	}
-	return node_path;
+	throw new Error('Could not resolve Node executable');
 }
 
 const VERSION_PICKER_SKELETON_ROW_COUNT = 6;
@@ -2168,10 +2174,8 @@ async function select_version_internal(
 							report_phase('downloading', entry.version);
 							await run_nvm(`install ${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
 							report_phase('installing', entry.version);
-							await run_nvm(`use ${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
 						} else {
 							report_phase('installing', entry.version);
-							await run_nvm(`use ${entry.version}`, DEFAULT_SHELL_TIMEOUT_MS, cancel_signal);
 						}
 						return;
 					}
@@ -2205,8 +2209,8 @@ async function select_version_internal(
 		await clear_last_failed_switch(context);
 		vscode.window.showInformationMessage(
 			shown
-				? `NodeSwitcher (${shown}) set Node ${display} for new integrated terminals (PATH). Open a new terminal if one is already open.`
-				: `NodeSwitcher set Node ${display} for new integrated terminals (PATH). Open a new terminal if one is already open.`
+				? `NodeSwitcher (${shown}) set Node ${display} for new integrated terminals in this workspace (PATH). Open a new terminal if one is already open.`
+				: `NodeSwitcher set Node ${display} for new integrated terminals in this workspace (PATH). Open a new terminal if one is already open.`
 		);
 	} catch (error) {
 		if (error instanceof InstallCancelledError) {
