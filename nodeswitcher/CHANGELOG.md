@@ -10,6 +10,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - **Sidebar — version from `package.json`**: Detect or suggest the Node version the workspace needs by reading **`package.json`** (e.g. `engines.node`, and dependency-driven constraints where feasible), and surface that in the sidebar so you can align the active version quickly.
 
+## [0.1.11] - 2026-03-29
+
+- **Docs**: README **Contact** section adds the Wideshot logo (fixed display width), invites Marketplace **Q&A** and **ratings/reviews**, and notes that feedback is used to improve the extension.
+
 ## [0.1.10] - 2026-03-29
 
 - **Docs**: README no longer shows the oversized top **logo** image; hero screenshot and section screenshots unchanged.

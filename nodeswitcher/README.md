@@ -29,7 +29,7 @@ The extension detects what is available on your `PATH`, runs the right CLI in a 
 - [Version picker (Quick Pick)](#version-picker-quick-pick)
 - [Sidebar](#sidebar)
 - [Project Node version](#project-node-version)
-- [Commands](#commands)
+- [Contact](#contact)
 - [Settings](#settings)
 - [Theme colors](#theme-colors)
 - [First-run “install requirements” panel](#first-run-install-requirements-panel)
@@ -110,7 +110,7 @@ When the active Node does not match the project’s declared or pinned version, 
 
 ## Roadmap and platform testing
 
-This section is the **living status** of validation and what we want to improve next. Reports from real setups (especially non-default shells and old OS releases) are welcome via your issue tracker or Marketplace Q&A.
+This section is the **living status** of validation and what we want to improve next. Reports from real setups (especially non-default shells and old OS releases) are welcome—see [Contact](#contact) or Marketplace Q&A.
 
 | Platform | Current status | Planned / needed |
 | -------- | -------------- | ---------------- |
@@ -167,23 +167,17 @@ Selecting a version from the picker can **persist** the choice into `.nodeswitch
 
 ---
 
-## Commands
+## Contact
 
-| Command | Purpose |
-| ------- | ------- |
-| **NodeSwitcher: Open NodeSwitcher** | Open the version picker (same as status bar click). |
-| **NodeSwitcher: Switch Node Version (Quick Pick)** | Same picker, explicit command. |
-| **NodeSwitcher: Refresh Version List** | Invalidate caches and refresh status bar / lists. |
-| **NodeSwitcher: Resolve Project Node Version Mismatch** | Guided flow when project and active Node disagree. |
-| **NodeSwitcher: Retry Last Node Version Switch** | Retry after a failed switch (e.g. after fixing permissions). |
-| **NodeSwitcher: Open Installer Repair Panel** | Webview for chained `n` / `nvm` repair (often opened automatically on certain errors). |
-| **NodeSwitcher: Run Automatic Installer Repair (n / nvm)** | Opens the repair panel without an error context. |
-| **NodeSwitcher: Show install requirements** | Reopen the first-run requirements webview anytime. |
-| **NodeSwitcher: Open Settings** | Jump to NodeSwitcher-related settings. |
-| **NodeSwitcher: Open Sidebar** | Focus the NODESWITCHER tree view. |
-| **NodeSwitcher: Apply Version From Sidebar** | Apply from sidebar selection context. |
-| **NodeSwitcher: Toggle Other Available Node Versions (Sidebar)** | Show/hide remote “available” rows in the sidebar. |
-| **NodeSwitcher: Set active** / **Path & uninstall** | Inline / context actions on sidebar items. |
+<p align="left">
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/wideshot-assets/logo.png" alt="Wideshot" width="168" />
+</p>
+
+**[contact@wideshot.dev](mailto:contact@wideshot.dev)**
+
+For any issue or bug, send a message any time. Reports are read and fixes are prioritized so NodeSwitcher stays **simple to use** and **distribution-agnostic** across **Windows**, **Linux**, and **macOS**.
+
+Feel free to use **Q&A** on the **Visual Studio Code Marketplace** listing, and to leave **ratings** and **reviews**. Every review is read and taken into account to keep improving NodeSwitcher.
 
 ---
 
