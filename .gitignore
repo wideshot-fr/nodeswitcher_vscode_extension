@@ -1,5 +1,6 @@
 # Repo root (if you add tooling or packages here)
 AGENTS.md
+.nodeswitcher
 out/
 dist/
 node_modules/
