@@ -10,6 +10,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - **Sidebar — version from `package.json`**: Detect or suggest the Node version the workspace needs by reading **`package.json`** (e.g. `engines.node`, and dependency-driven constraints where feasible), and surface that in the sidebar so you can align the active version quickly.
 
+## [0.1.9] - 2026-03-29
+
+- **Marketplace discoverability**: `displayName`, `description`, and `keywords` updated so the extension is easier to find for searches like **nvm**, **node version manager**, **node manager**, **nvm-windows**, **nvm-sh**, and **n**; README intro aligned with the same terms.
+
 ## [0.1.8] - 2026-03-29
 
 - **Docs**: README uses hosted **PNG** marketing assets on S3 (`https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/`): logo, hero image, version picker, sidebar, project scan, and mismatch screenshots. Table of contents includes **Screenshots**; Requirements note matches **`engines.vscode`** `^1.105.0`.

@@ -1,9 +1,23 @@
 {
   "name": "nodeswitcher",
   "publisher": "wideshot",
-  "displayName": "nodeswitcher",
-  "description": "Switch and install Node.js versions from the status bar using n or nvm-sh on macOS/Linux/Unix (Homebrew-friendly nvm paths and common Linux layouts) or nvm-windows on Windows. Windows uses NVM only; Unix prefers n when both n and nvm are installed.",
-  "version": "0.1.8",
+  "displayName": "NodeSwitcher — Node & NVM version manager",
+  "description": "Node version manager for VS Code: switch and install Node.js from the status bar and sidebar using nvm (nvm-sh on macOS/Linux, nvm-windows on Windows) or n. Reads .nvmrc, package.json engines, and .nodeswitcher.",
+  "version": "0.1.9",
+  "keywords": [
+    "nvm",
+    "nvm-windows",
+    "nvm-sh",
+    "node",
+    "nodejs",
+    "node version manager",
+    "version manager",
+    "node manager",
+    "n",
+    "nvmrc",
+    "node-version",
+    "switch node"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -1,12 +1,12 @@
 <!-- Hosted marketing assets: https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/ -->
 
 <p align="center">
-  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher_logo.png" width="160" height="160" alt="NodeSwitcher logo" />
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher_logo.png" alt="NodeSwitcher logo" />
 </p>
 
 # NodeSwitcher
 
-**NodeSwitcher** is a [Visual Studio Code](https://code.visualstudio.com/) extension that switches and installs **Node.js** versions from the **status bar** and **sidebar**, using the same version managers you already use on the command line.
+**NodeSwitcher** is a **node version manager** for [Visual Studio Code](https://code.visualstudio.com/): switch and install **Node.js** from the **status bar** and **sidebar** using **nvm** (nvm-sh / **nvm-windows**) or **n** — the same CLIs you use in the terminal.
 
 <p align="center">
   <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher_marketing_1.png" alt="NodeSwitcher — switch Node from the status bar and sidebar in VS Code" width="920" />
@@ -19,22 +19,10 @@
 
 The extension detects what is available on your `PATH`, runs the right CLI in a login shell, and applies the chosen Node to **new integrated terminals** via VS Code’s environment API (`PATH`, and `N_PREFIX` when using `n`).
 
-### Branding and Marketplace listing
-
-| Where you see it | Asset | Notes |
-| ---------------- | ----- | ----- |
-| **VS Code Extensions view / Marketplace / upload portal** | [`media/extension-icon.png`](media/extension-icon.png) | Declared as `"icon"` in `package.json` (128×128 PNG). Exported from the green [`media/logo.svg`](media/logo.svg). |
-| **README on the Marketplace** | Hosted **[`nodeswitcher_logo.png`](https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher_logo.png)** (+ [screenshots](#screenshots)) | PNG required in the README (no SVG). Additional marketing images live under `nodeswitcher/` on the same S3 bucket. Local fallbacks: [`media/readme-logo.png`](media/readme-logo.png), `npm run readme:logo`. |
-| **Activity bar and sidebar** | [`media/logo.svg`](media/logo.svg) | SVG gradient mark in the product UI. |
-| **Status bar** | [`media/logo-status-glyph.svg`](media/logo-status-glyph.svg) → font glyph | Monochrome `currentColor` shape so the icon tints with the status bar (typically white on the colored bar). |
-
-Regenerate the PNGs with `npm run readme:logo` (runs automatically in `vscode:prepublish` before `npx @vscode/vsce package`).
-
 ---
 
 ## Table of contents
 
-- [Branding and Marketplace listing](#branding-and-marketplace-listing)
 - [Screenshots](#screenshots)
 - [Why NodeSwitcher](#why-nodeswitcher)
 - [Requirements](#requirements)
@@ -66,7 +54,7 @@ All images below are served from **`https://wideshot-land.s3.eu-west-3.amazonaws
 Click the **Node** item in the status bar to open the picker: installed versions, optional remote list, and project pin when applicable.
 
 <p align="center">
-  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher-dropdown.png" alt="NodeSwitcher version picker dropdown in VS Code" width="720" />
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher-dropdown.png" alt="NodeSwitcher version picker dropdown in VS Code" />
 </p>
 
 ### Sidebar
@@ -74,7 +62,7 @@ Click the **Node** item in the status bar to open the picker: installed versions
 Use the **NODESWITCHER** activity bar view to browse versions, refresh, and apply without opening the picker.
 
 <p align="center">
-  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher-sidebar.png" alt="NodeSwitcher sidebar with installed Node versions" width="520" />
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher-sidebar.png" alt="NodeSwitcher sidebar with installed Node versions" />
 </p>
 
 ### Project declaration scan
@@ -82,7 +70,7 @@ Use the **NODESWITCHER** activity bar view to browse versions, refresh, and appl
 While scanning the workspace, NodeSwitcher shows progress for **`.nodeswitcher`**, **`package.json`**, **`.npmrc`**, **`.nvmrc`**, and related sources.
 
 <p align="center">
-  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher-scanversion.png" alt="NodeSwitcher status bar while scanning project Node declarations" width="640" />
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher-scanversion.png" alt="NodeSwitcher status bar while scanning project Node declarations" />
 </p>
 
 ### Project version mismatch
@@ -90,7 +78,7 @@ While scanning the workspace, NodeSwitcher shows progress for **`.nodeswitcher`*
 When the active Node does not match the project’s declared or pinned version, the status bar warns you and you can resolve it from notifications or commands.
 
 <p align="center">
-  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher-versionmismatch.png" alt="NodeSwitcher project Node version mismatch in the status bar" width="640" />
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher-versionmismatch.png" alt="NodeSwitcher project Node version mismatch in the status bar" />
 </p>
 
 ---
