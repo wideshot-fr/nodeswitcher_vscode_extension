@@ -104,7 +104,6 @@ export const OPEN_SIDEBAR_COMMAND_ID = 'nodeswitcher.openSidebar';
 export type NodePickerItem = vscode.QuickPickItem & {
 	entry?: VersionEntry;
 	action?: 'toggle_available' | 'toggle_installed' | 'open_settings' | 'switch_to_project' | 'skeleton';
-	tooltip?: string;
 };
 
 export const BACKEND_STATE_KEY = 'nodeswitcher.backend';
@@ -1321,7 +1320,7 @@ export async function open_version_picker(context: vscode.ExtensionContext, stat
 							...item,
 							label: `$(warning) ${item.label}`,
 							description: 'Switch failed. Press Enter to retry.',
-							tooltip: `${detail}\n\n${hint}\n\nPress Enter to retry.`,
+							detail: `${detail}\n\n${hint}\n\nPress Enter to retry.`,
 							iconPath: new vscode.ThemeIcon('warning')
 						};
 					});
@@ -1679,7 +1678,7 @@ export function build_version_picker_items(
 					? `${detailsBase} · ${channel}`
 					: detailsBase;
 		const gt = group_tag_for(role);
-		const tooltip = entry.is_installed
+		const row_detail = entry.is_installed
 			? build_installed_picker_tooltip(entry, backend, role, tooltip_channel)
 			: row_hover_text(entry, tooltip_channel, role);
 		const primary_label_chars = align_installed_state_in_description
@@ -1710,7 +1709,7 @@ export function build_version_picker_items(
 		}
 		const row: NodePickerItem = {
 			label,
-			tooltip,
+			detail: row_detail,
 			iconPath: quick_pick_version_row_icon_uri(extension_path, entry.version, indent_icon),
 			entry
 		};
@@ -1735,8 +1734,7 @@ export function build_version_picker_items(
 		quick_pick_items.push({
 			label: project_label_padded,
 			description: `${entry.version} · .nodeswitcher`,
-			detail: 'Matches the version pinned for this workspace.',
-			tooltip: `Use Node ${entry.version} as required by this workspace (.nodeswitcher).`,
+			detail: `Use Node ${entry.version} as required by this workspace (.nodeswitcher). Matches the version pinned for this workspace.`,
 			iconPath: quick_pick_project_switch_uri(extension_path),
 			action: 'switch_to_project',
 			alwaysShow: true,
@@ -1786,7 +1784,7 @@ export function build_version_picker_items(
 				include_installed ? 'Hide installed local node.js versions' : 'Show installed local node.js versions'
 			),
 			description: toggle_installed_desc,
-			tooltip: include_installed
+			detail: include_installed
 				? 'Hides installed local Node.js versions listed below.'
 				: 'Shows installed local Node.js versions.',
 			iconPath: new vscode.ThemeIcon(include_installed ? 'chevron-up' : 'chevron-down'),
@@ -1808,7 +1806,7 @@ export function build_version_picker_items(
 			include_available ? 'Hide other available versions' : 'Show other available versions'
 		),
 		description: toggle_available_desc,
-		tooltip: include_available
+		detail: include_available
 			? 'Hides the list of other Node.js versions available to install (from your version manager).'
 			: 'Loads and lists Node.js versions available to install (newest first), excluding already installed.',
 		iconPath: new vscode.ThemeIcon(include_available ? 'chevron-up' : 'cloud-download'),
@@ -1823,7 +1821,7 @@ export function build_version_picker_items(
 	quick_pick_items.push({
 		label: footer_primary('Open settings'),
 		description: footer_secondary(open_settings_desc),
-		tooltip: 'Opens NodeSwitcher extension settings.',
+		detail: 'Opens NodeSwitcher extension settings.',
 		iconPath: new vscode.ThemeIcon('settings-gear'),
 		action: 'open_settings'
 	});

@@ -391,6 +391,8 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 	}
 
 	private pickerItemsToElements(items: NodePickerItem[], backend: NodeBackend): SidebarElement[] {
+		const picker_hover = (it: NodePickerItem): string | undefined =>
+			typeof it.detail === 'string' && it.detail.trim().length > 0 ? it.detail : undefined;
 		const rows: SidebarElement[] = [];
 		for (const it of items) {
 			if (it.kind === vscode.QuickPickItemKind.Separator) {
@@ -403,7 +405,7 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 					label: strip_footer_quickpick_padding(it.label),
 					description:
 						it.description !== undefined ? strip_footer_quickpick_padding(it.description) : undefined,
-					tooltip: typeof it.tooltip === 'string' ? it.tooltip : undefined
+					tooltip: picker_hover(it)
 				});
 				continue;
 			}
@@ -413,7 +415,7 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 					label: strip_footer_quickpick_padding(it.label),
 					description:
 						it.description !== undefined ? strip_footer_quickpick_padding(it.description) : undefined,
-					tooltip: typeof it.tooltip === 'string' ? it.tooltip : undefined
+					tooltip: picker_hover(it)
 				});
 				continue;
 			}
@@ -424,7 +426,7 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 					entry: it.entry,
 					label: it.label,
 					description: it.description,
-					tooltip: typeof it.tooltip === 'string' ? it.tooltip : undefined
+					tooltip: picker_hover(it)
 				});
 				continue;
 			}
@@ -442,7 +444,7 @@ export class NodeSidebarProvider implements vscode.TreeDataProvider<SidebarEleme
 					role,
 					label: it.label,
 					description: it.description,
-					tooltip: typeof it.tooltip === 'string' ? it.tooltip : undefined
+					tooltip: picker_hover(it)
 				});
 			}
 		}

@@ -6,6 +6,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-03-29
+
+- **Fix**: Version picker no longer uses the proposed `QuickPickItem.tooltip` API (which threw in normal VS Code / Cursor and left the dropdown stuck on “Loading…”). Row hints now use stable `QuickPickItem.detail` instead; sidebar tree hovers still show the same text.
+
 ## [0.1.4] - 2026-03-29
 
 - **Fix**: Extension now loads correctly in Cursor and VS Code — engine requirement lowered from `^1.110.0` to `^1.95.0`.
