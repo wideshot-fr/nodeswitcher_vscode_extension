@@ -10,7 +10,10 @@ function load_dotenv(file_path) {
 	if (!fs.existsSync(file_path)) {
 		return;
 	}
-	const text = fs.readFileSync(file_path, 'utf8');
+	let text = fs.readFileSync(file_path, 'utf8');
+	if (text.charCodeAt(0) === 0xfeff) {
+		text = text.slice(1);
+	}
 	for (const line of text.split(/\r?\n/)) {
 		const t = line.trim();
 		if (!t || t.startsWith('#')) {
@@ -28,7 +31,12 @@ function load_dotenv(file_path) {
 		) {
 			val = val.slice(1, -1);
 		}
-		if (key && process.env[key] === undefined) {
+		if (!key) {
+			continue;
+		}
+		const cur = process.env[key];
+		const cur_empty = cur === undefined || (typeof cur === 'string' && !cur.trim());
+		if (cur_empty) {
 			process.env[key] = val;
 		}
 	}
