@@ -6,6 +6,14 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
+### Upcoming
+
+- **Sidebar — version from `package.json`**: Detect or suggest the Node version the workspace needs by reading **`package.json`** (e.g. `engines.node`, and dependency-driven constraints where feasible), and surface that in the sidebar so you can align the active version quickly.
+
+## [0.1.8] - 2026-03-29
+
+- **Docs**: README uses hosted **PNG** marketing assets on S3 (`https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/`): logo, hero image, version picker, sidebar, project scan, and mismatch screenshots. Table of contents includes **Screenshots**; Requirements note matches **`engines.vscode`** `^1.105.0`.
+
 ## [0.1.7] - 2026-03-29
 
 - **Status bar**: Keeps the version picker **clickable** after switches, refresh, loading states, and while the Quick Pick is open — `command` is re-bound whenever the item is repainted; picker no longer clears the tooltip to `undefined` (fixes missing pointer / dead clicks in VS Code / Cursor).

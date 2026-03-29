@@ -1,10 +1,16 @@
+<!-- Hosted marketing assets: https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/ -->
+
 <p align="center">
-  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/readme-logo.png" width="120" height="120" alt="NodeSwitcher logo" />
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher_logo.png" width="160" height="160" alt="NodeSwitcher logo" />
 </p>
 
 # NodeSwitcher
 
 **NodeSwitcher** is a [Visual Studio Code](https://code.visualstudio.com/) extension that switches and installs **Node.js** versions from the **status bar** and **sidebar**, using the same version managers you already use on the command line.
+
+<p align="center">
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher_marketing_1.png" alt="NodeSwitcher — switch Node from the status bar and sidebar in VS Code" width="920" />
+</p>
 
 | Platform | Supported managers |
 | -------- | ------------------- |
@@ -18,7 +24,7 @@ The extension detects what is available on your `PATH`, runs the right CLI in a 
 | Where you see it | Asset | Notes |
 | ---------------- | ----- | ----- |
 | **VS Code Extensions view / Marketplace / upload portal** | [`media/extension-icon.png`](media/extension-icon.png) | Declared as `"icon"` in `package.json` (128×128 PNG). Exported from the green [`media/logo.svg`](media/logo.svg). |
-| **README on the Marketplace** | [`media/readme-logo.png`](media/readme-logo.png) | PNG required in the README; SVG is rejected by `@vscode/vsce`. Same artwork as the listing icon, wider render for the doc header. |
+| **README on the Marketplace** | Hosted **[`nodeswitcher_logo.png`](https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher_logo.png)** (+ [screenshots](#screenshots)) | PNG required in the README (no SVG). Additional marketing images live under `nodeswitcher/` on the same S3 bucket. Local fallbacks: [`media/readme-logo.png`](media/readme-logo.png), `npm run readme:logo`. |
 | **Activity bar and sidebar** | [`media/logo.svg`](media/logo.svg) | SVG gradient mark in the product UI. |
 | **Status bar** | [`media/logo-status-glyph.svg`](media/logo-status-glyph.svg) → font glyph | Monochrome `currentColor` shape so the icon tints with the status bar (typically white on the colored bar). |
 
@@ -29,6 +35,7 @@ Regenerate the PNGs with `npm run readme:logo` (runs automatically in `vscode:pr
 ## Table of contents
 
 - [Branding and Marketplace listing](#branding-and-marketplace-listing)
+- [Screenshots](#screenshots)
 - [Why NodeSwitcher](#why-nodeswitcher)
 - [Requirements](#requirements)
 - [Roadmap and platform testing](#roadmap-and-platform-testing)
@@ -47,6 +54,44 @@ Regenerate the PNGs with `npm run readme:logo` (runs automatically in `vscode:pr
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 - [License](#license)
+
+---
+
+## Screenshots
+
+All images below are served from **`https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/`** (same host as the logo).
+
+### Version picker (Quick Pick)
+
+Click the **Node** item in the status bar to open the picker: installed versions, optional remote list, and project pin when applicable.
+
+<p align="center">
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher-dropdown.png" alt="NodeSwitcher version picker dropdown in VS Code" width="720" />
+</p>
+
+### Sidebar
+
+Use the **NODESWITCHER** activity bar view to browse versions, refresh, and apply without opening the picker.
+
+<p align="center">
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher-sidebar.png" alt="NodeSwitcher sidebar with installed Node versions" width="520" />
+</p>
+
+### Project declaration scan
+
+While scanning the workspace, NodeSwitcher shows progress for **`.nodeswitcher`**, **`package.json`**, **`.npmrc`**, **`.nvmrc`**, and related sources.
+
+<p align="center">
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher-scanversion.png" alt="NodeSwitcher status bar while scanning project Node declarations" width="640" />
+</p>
+
+### Project version mismatch
+
+When the active Node does not match the project’s declared or pinned version, the status bar warns you and you can resolve it from notifications or commands.
+
+<p align="center">
+  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher-versionmismatch.png" alt="NodeSwitcher project Node version mismatch in the status bar" width="640" />
+</p>
 
 ---
 
@@ -74,7 +119,7 @@ Regenerate the PNGs with `npm run readme:logo` (runs automatically in `vscode:pr
 
 ### General
 
-- **VS Code** `^1.110.0` (see `engines` in `package.json`).
+- **VS Code** `^1.105.0` or newer (see `engines` in `package.json`; Cursor builds that match this API version are supported).
 - A **folder** opened as a workspace is recommended so project detection (`.nodeswitcher`, `package.json`, etc.) works as intended.
 
 ---
