@@ -134,8 +134,10 @@ const DEFAULT_SHELL_TIMEOUT_MS = 120_000;
 const BACKEND_RECONCILE_OFFER_COOLDOWN_MS = 120_000;
 const PROJECT_PROMPTED_KEY = 'nodeswitcher.projectPrompted';
 const PICKER_OPENED_KEY = 'nodeswitcher.pickerOpenedOnce';
-const TERMINAL_STALE_NOTICE_UNTIL_KEY = 'nodeswitcher.terminalStaleNoticeUntilMs';
-const TERMINAL_STALE_NOTICE_WINDOW_MS = 180_000;
+const NODE_SWITCHER_TERMINAL_ENV_OPTIONS: vscode.EnvironmentVariableMutatorOptions = {
+	applyAtProcessCreation: true,
+	applyAtShellIntegration: true
+};
 const NVM_SH_PROMPT_DISMISSED_KEY = 'nodeswitcher.nvmShInstallDismissed';
 const NVM_WINDOWS_PROMPT_DISMISSED_KEY = 'nodeswitcher.nvmWindowsInstallDismissed';
 const N_MACOS_PROMPT_DISMISSED_KEY = 'nodeswitcher.nMacosInstallDismissed';
@@ -957,34 +959,25 @@ function get_nodeswitcher_terminal_env_collection(
 	return context.environmentVariableCollection;
 }
 
-async function mark_terminal_stale_notice(context: vscode.ExtensionContext): Promise<void> {
-	const until = Date.now() + TERMINAL_STALE_NOTICE_WINDOW_MS;
-	await context.workspaceState.update(TERMINAL_STALE_NOTICE_UNTIL_KEY, until);
-}
-
-export function register_terminal_stale_notice_listener(context: vscode.ExtensionContext): void {
+export function register_new_terminal_applied_node_banner(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(
 		vscode.window.onDidOpenTerminal((terminal) => {
-			void deliver_terminal_stale_notice_if_needed(context, terminal);
+			if (terminal.name === NODESWITCHER_INSTALL_TERMINAL_NAME) {
+				return;
+			}
+			const raw = context.workspaceState.get<string>(VERSION_STATE_KEY);
+			const n = raw ? normalize_version(raw) || raw.trim() : '';
+			if (!n) {
+				return;
+			}
+			const line = `nodeswitcher: node.js ${node_version_display_v(n)}`;
+			if (process.platform === 'win32') {
+				terminal.sendText(`Write-Host ${JSON.stringify(line)} -ForegroundColor DarkCyan`, true);
+			} else {
+				terminal.sendText(`echo "${line}"`, true);
+			}
 		})
 	);
-}
-
-async function deliver_terminal_stale_notice_if_needed(
-	context: vscode.ExtensionContext,
-	terminal: vscode.Terminal
-): Promise<void> {
-	const until = context.workspaceState.get<number>(TERMINAL_STALE_NOTICE_UNTIL_KEY) ?? 0;
-	if (until === 0 || Date.now() >= until) {
-		return;
-	}
-	const msg =
-		'NodeSwitcher: Be careful — this terminal might still be using the previous Node version.';
-	if (process.platform === 'win32') {
-		terminal.sendText(`Write-Host ${JSON.stringify(msg)} -ForegroundColor DarkYellow`, true);
-	} else {
-		terminal.sendText(`echo ${JSON.stringify(msg)}`, true);
-	}
 }
 
 export async function apply_node_environment(
@@ -1002,11 +995,11 @@ export async function apply_node_environment(
 	const sep = path.delimiter;
 	const scoped = get_nodeswitcher_terminal_env_collection(context);
 	scoped.delete('PATH');
-	scoped.prepend('PATH', `${bin_dir}${sep}`, { applyAtProcessCreation: true });
+	scoped.prepend('PATH', `${bin_dir}${sep}`, NODE_SWITCHER_TERMINAL_ENV_OPTIONS);
 	if (backend === 'n') {
 		const np = get_resolved_n_prefix_from_config();
 		if (np) {
-			scoped.replace('N_PREFIX', np, { applyAtProcessCreation: true });
+			scoped.replace('N_PREFIX', np, NODE_SWITCHER_TERMINAL_ENV_OPTIONS);
 		} else {
 			scoped.delete('N_PREFIX');
 		}
@@ -2269,7 +2262,6 @@ async function select_version_internal(
 			bind_status_bar_opens_picker(status_item);
 		}
 		await apply_node_environment(context, entry.version, backend, true);
-		await mark_terminal_stale_notice(context);
 		const applied_raw =
 			(context.workspaceState.get<string>(VERSION_STATE_KEY) ?? sanitize_version(entry.version)) ||
 			entry.version;
@@ -2284,8 +2276,8 @@ async function select_version_internal(
 		await clear_last_failed_switch(context);
 		vscode.window.showInformationMessage(
 			shown
-				? `NodeSwitcher (${shown}) set Node ${display} for new integrated terminals in this workspace (PATH). Open a new terminal if one is already open.`
-				: `NodeSwitcher set Node ${display} for new integrated terminals in this workspace (PATH). Open a new terminal if one is already open.`
+				? `NodeSwitcher (${shown}): Node ${display} applied for this workspace. Integrated terminals pick up the new PATH when shell integration is enabled; if not, open a new terminal.`
+				: `NodeSwitcher: Node ${display} applied for this workspace. Integrated terminals pick up the new PATH when shell integration is enabled; if not, open a new terminal.`
 		);
 	} catch (error) {
 		if (error instanceof InstallCancelledError) {
@@ -3471,7 +3463,6 @@ async function maybe_show_project_mismatch_notice(
 	if (choice === 'Switch to project version' && pin) {
 		try {
 			await apply_node_environment(context, pin, backend, false);
-			await mark_terminal_stale_notice(context);
 			await persist_project_selection(context, pin, backend);
 			await paint_main_status_bar(context, status_item, pin, backend);
 		} catch (error) {
@@ -3500,7 +3491,6 @@ async function run_project_mismatch_prompt(
 		await context.workspaceState.update(MISMATCH_PROMPT_FP_KEY, undefined);
 		try {
 			await apply_node_environment(context, desired, backend, false);
-			await mark_terminal_stale_notice(context);
 		} catch (e) {
 			report_nodeswitcher_failure(context, `NodeSwitcher could not switch to Node ${desired}.`, e);
 			return 'dismissed';
@@ -3511,7 +3501,6 @@ async function run_project_mismatch_prompt(
 		await context.workspaceState.update(MISMATCH_KEEP_CURRENT_KEY, true);
 		try {
 			await apply_node_environment(context, current_n, backend, true);
-			await mark_terminal_stale_notice(context);
 			await persist_project_selection(context, current_n, backend);
 		} catch (e) {
 			report_nodeswitcher_failure(context, 'NodeSwitcher could not update the environment.', e);

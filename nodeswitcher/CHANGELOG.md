@@ -10,6 +10,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - **Sidebar — version from `package.json`**: Detect or suggest the Node version the workspace needs by reading **`package.json`** (e.g. `engines.node`, and dependency-driven constraints where feasible), and surface that in the sidebar so you can align the active version quickly.
 
+## [0.1.13] - 2026-03-29
+
+- **Integrated terminals**: `PATH` / `N_PREFIX` mutators use **`applyAtShellIntegration`** as well as process creation so **already-open** terminals can pick up the switched Node when VS Code **shell integration** is enabled; success toast and README troubleshooting updated accordingly.
+- **New terminal banner**: Opening a new integrated terminal prints `nodeswitcher: node.js v…` (from the active NodeSwitcher version); skipped for the **NodeSwitcher install** terminal. Removed the old yellow “previous Node version” warning on new terminals.
+
 ## [0.1.12] - 2026-03-29
 
 - **Docs**: README **Screenshots** — removed the redundant line about hosted image URLs.

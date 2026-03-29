@@ -8,7 +8,7 @@ import {
 	initialize_status,
 	open_version_picker,
 	refresh_status_bar,
-	register_terminal_stale_notice_listener,
+	register_new_terminal_applied_node_banner,
 	repaint_status_bar_for_display_settings,
 	retry_last_failed_node_switch,
 	run_resolve_project_node_mismatch_command,
@@ -32,7 +32,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	apply_nodeswitcher_status_bar_style(status_item);
 	apply_nodeswitcher_status_bar_visibility(status_item);
 	context.subscriptions.push(status_item);
-	register_terminal_stale_notice_listener(context);
+	register_new_terminal_applied_node_banner(context);
 
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration((e) => {

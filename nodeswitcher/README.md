@@ -13,7 +13,7 @@
 | **macOS / Linux / Unix** | [**n**](https://github.com/tj/n) (preferred when both are installed) or [**nvm-sh**](https://github.com/nvm-sh/nvm) |
 | **Windows** | [**nvm-windows**](https://github.com/coreybutler/nvm-windows) only (not `n` or nvm-sh) |
 
-The extension detects what is available on your `PATH`, runs the right CLI in a login shell, and applies the chosen Node to **new integrated terminals** via VS Code’s environment API (`PATH`, and `N_PREFIX` when using `n`).
+The extension detects what is available on your `PATH`, runs the right CLI in a login shell, and applies the chosen Node to integrated terminals via VS Code’s environment API (`PATH`, and `N_PREFIX` when using `n`)—including **already-open** terminals when **shell integration** is enabled (default for supported shells).
 
 ---
 
@@ -126,7 +126,7 @@ This section is the **living status** of validation and what we want to improve 
 2. Install the **NodeSwitcher** extension from the Marketplace (or load the `.vsix` from source).
 3. On first launch, review the **NodeSwitcher — What you need** webview (or run **NodeSwitcher: Show install requirements** from the Command Palette).
 4. Click the **Node** entry in the **status bar** (or open the **NODESWITCHER** sidebar) and choose a version.
-5. Open a **new** integrated terminal so it picks up the updated `PATH` (existing terminals keep their old environment).
+5. In integrated terminals, run a command or get a new prompt: with **shell integration** on, the updated `PATH` applies to terminals that are already open; if `node -v` is still wrong, open a **new** terminal or check that shell integration is enabled for your shell.
 
 ---
 
@@ -232,7 +232,7 @@ A **webview** (not static HTML only) drives repair by posting messages to the ex
 
 - **Detection**: The extension probes for `n` and `nvm` with timeouts and caches a **backend** choice (with invalidation when things break).
 - **Apply**: For **`n`**, it runs `n <version>` (or equivalent) then resolves the `node` binary (with retries when `n bin` reports **version required**). For **nvm**, it uses a bash login wrapper with `nvm use`. On Windows, PowerShell + nvm-windows.
-- **Environment**: `vscode.EnvironmentVariableCollection` **prepends** the Node `bin` directory to `PATH` for **new** terminals (workspace-scoped when a folder is open). For **`n`**, optional **`N_PREFIX`** is applied from `nodeswitcher.nPrefix` when set.
+- **Environment**: `vscode.EnvironmentVariableCollection` **prepends** the Node `bin` directory to `PATH` for integrated terminals (workspace-scoped when a folder is open), using both **process creation** and **shell integration** mutators so open terminals can pick up changes when the shell supports it. For **`n`**, optional **`N_PREFIX`** is applied from `nodeswitcher.nPrefix` when set.
 - **Errors**: Failures can open the **error** webview, **notifications**, and/or the **repair** webview depending on error class (e.g. Unix permission vs “no active Node” for `n`).
 
 ---
@@ -244,7 +244,7 @@ A **webview** (not static HTML only) drives repair by posting messages to the ex
 | **`n bin` / “version required”** | In a terminal run `n lts` or pick a version again; use the **first-time setup** / **`n_no_active`** section in the repair panel; ensure `N_PREFIX` / `nodeswitcher.nPrefix` is consistent. |
 | **`mkdir` / permission denied under `/usr/local/n`** | Set **`nodeswitcher.nPrefix`** to e.g. `~/.n` (expanded to your home directory), reload; or fix ownership; use **Installer repair** for guided steps. |
 | **Windows: nvm not found** | Install **nvm-windows** and restart VS Code so `PATH` is picked up. |
-| **Old PATH in terminal** | **Open a new terminal** after switching; existing terminals do not retroactively update. |
+| **Old PATH in terminal** | Ensure **shell integration** is enabled for your shell; run a new command or prompt cycle. If it still shows the old Node, **open a new terminal**. |
 | **Picker empty or wrong** | **Refresh** versions; check that your shell initializes `n` / `nvm` for **non-interactive** login shells if you rely on profile-only setup. |
 
 ---
