@@ -1,9 +1,5 @@
 <!-- Hosted marketing assets: https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/ -->
 
-<p align="center">
-  <img src="https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/nodeswitcher_logo.png" alt="NodeSwitcher logo" />
-</p>
-
 # NodeSwitcher
 
 **NodeSwitcher** is a **node version manager** for [Visual Studio Code](https://code.visualstudio.com/): switch and install **Node.js** from the **status bar** and **sidebar** using **nvm** (nvm-sh / **nvm-windows**) or **n** — the same CLIs you use in the terminal.
@@ -47,7 +43,7 @@ The extension detects what is available on your `PATH`, runs the right CLI in a 
 
 ## Screenshots
 
-All images below are served from **`https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/`** (same host as the logo).
+All images below are served from **`https://wideshot-land.s3.eu-west-3.amazonaws.com/nodeswitcher/`** (same host as the hero image above).
 
 ### Version picker (Quick Pick)
 
