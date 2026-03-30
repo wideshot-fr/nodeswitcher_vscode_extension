@@ -985,7 +985,7 @@ export async function apply_node_environment(
 	version: string,
 	backend: NodeBackend,
 	already_switched = false
-): Promise<void> {
+): Promise<{ bin_dir: string }> {
 	const safe = sanitize_version(version);
 	if (!safe) {
 		throw new Error('Invalid Node version');
@@ -1009,6 +1009,87 @@ export async function apply_node_environment(
 	await context.workspaceState.update(VERSION_STATE_KEY, safe);
 	await context.workspaceState.update(BACKEND_STATE_KEY, backend);
 	await context.workspaceState.update(LAST_APPLIED_VERSION_KEY, safe);
+	return { bin_dir };
+}
+
+type Windows_terminal_shell_kind = 'cmd' | 'powershell' | 'posix';
+
+function integrated_terminal_shell_kind_win32(terminal: vscode.Terminal): Windows_terminal_shell_kind {
+	const o = terminal.creationOptions;
+	if ('shellPath' in o && typeof o.shellPath === 'string') {
+		const sp = o.shellPath.toLowerCase().replace(/\\/g, '/');
+		if (sp.includes('cmd.exe')) {
+			return 'cmd';
+		}
+		if (sp.includes('wsl.exe') || sp.includes('wslhost') || sp.endsWith('/wsl')) {
+			return 'posix';
+		}
+		if (
+			sp.includes('bash.exe') ||
+			sp.includes('/bash') ||
+			sp.includes('git\\bin\\bash') ||
+			sp.includes('git/bin/bash')
+		) {
+			return 'posix';
+		}
+	}
+	return 'powershell';
+}
+
+function bash_escape_double(s: string): string {
+	return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`');
+}
+
+function post_switch_active_integrated_terminal(
+	terminal: vscode.Terminal | undefined,
+	bin_dir: string,
+	backend: NodeBackend,
+	from_version_raw: string | undefined,
+	to_version_raw: string
+): void {
+	if (!terminal || terminal.name === NODESWITCHER_INSTALL_TERMINAL_NAME) {
+		return;
+	}
+	const from_label = from_version_raw?.trim()
+		? node_version_display_v(from_version_raw.trim())
+		: 'unknown';
+	const to_label = node_version_display_v(to_version_raw.trim());
+	const notice = `NodeSwitcher: node version change from ${from_label} to ${to_label}`;
+	const np = backend === 'n' ? get_resolved_n_prefix_from_config() : undefined;
+
+	if (process.platform === 'win32') {
+		const kind = integrated_terminal_shell_kind_win32(terminal);
+		if (kind === 'cmd') {
+			terminal.sendText(`set "PATH=${bin_dir};%PATH%"`, true);
+			if (np) {
+				terminal.sendText(`set "N_PREFIX=${np}"`, true);
+			}
+			terminal.sendText(`echo ${notice}`, true);
+			return;
+		}
+		if (kind === 'posix') {
+			terminal.sendText(`export PATH="${bash_escape_double(bin_dir)}:$PATH"`, true);
+			if (np) {
+				terminal.sendText(`export N_PREFIX="${bash_escape_double(np)}"`, true);
+			}
+			terminal.sendText(`echo "${bash_escape_double(notice)}"`, true);
+			return;
+		}
+		const ps_bin = bin_dir.replace(/'/g, "''");
+		terminal.sendText(`$env:Path = '${ps_bin};' + $env:Path`, true);
+		if (np) {
+			const ps_np = np.replace(/'/g, "''");
+			terminal.sendText(`$env:N_PREFIX = '${ps_np}'`, true);
+		}
+		terminal.sendText(`Write-Host ${JSON.stringify(notice)} -ForegroundColor Cyan`, true);
+		return;
+	}
+
+	terminal.sendText(`export PATH="${bash_escape_double(bin_dir)}:$PATH"`, true);
+	if (np) {
+		terminal.sendText(`export N_PREFIX="${bash_escape_double(np)}"`, true);
+	}
+	terminal.sendText(`echo "${bash_escape_double(notice)}"`, true);
 }
 
 function parse_n_bin_output_line(out: string): string | undefined {
@@ -2261,11 +2342,19 @@ async function select_version_internal(
 			apply_nodeswitcher_status_bar_visibility(status_item);
 			bind_status_bar_opens_picker(status_item);
 		}
-		await apply_node_environment(context, entry.version, backend, true);
+		const from_workspace_version = context.workspaceState.get<string>(VERSION_STATE_KEY);
+		const { bin_dir } = await apply_node_environment(context, entry.version, backend, true);
 		const applied_raw =
 			(context.workspaceState.get<string>(VERSION_STATE_KEY) ?? sanitize_version(entry.version)) ||
 			entry.version;
 		const applied_n = normalize_version(applied_raw) || applied_raw;
+		post_switch_active_integrated_terminal(
+			vscode.window.activeTerminal,
+			bin_dir,
+			backend,
+			from_workspace_version,
+			applied_n
+		);
 		const backend_resolved = await resolve_backend_cached(context, true);
 		await persist_project_selection(context, applied_n, backend_resolved);
 		const probed = await get_current_version(backend_resolved, FAST_SHELL_TIMEOUT_MS).catch(() => '');
@@ -3462,7 +3551,16 @@ async function maybe_show_project_mismatch_notice(
 	const choice = await vscode.window.showInformationMessage(message, ...buttons);
 	if (choice === 'Switch to project version' && pin) {
 		try {
-			await apply_node_environment(context, pin, backend, false);
+			const from_v = context.workspaceState.get<string>(VERSION_STATE_KEY);
+			const { bin_dir } = await apply_node_environment(context, pin, backend, false);
+			const pin_n = normalize_version(pin) || pin;
+			post_switch_active_integrated_terminal(
+				vscode.window.activeTerminal,
+				bin_dir,
+				backend,
+				from_v,
+				pin_n
+			);
 			await persist_project_selection(context, pin, backend);
 			await paint_main_status_bar(context, status_item, pin, backend);
 		} catch (error) {
@@ -3490,7 +3588,16 @@ async function run_project_mismatch_prompt(
 		await context.workspaceState.update(MISMATCH_KEEP_CURRENT_KEY, false);
 		await context.workspaceState.update(MISMATCH_PROMPT_FP_KEY, undefined);
 		try {
-			await apply_node_environment(context, desired, backend, false);
+			const from_v = context.workspaceState.get<string>(VERSION_STATE_KEY);
+			const { bin_dir } = await apply_node_environment(context, desired, backend, false);
+			const to_n = normalize_version(desired) || desired;
+			post_switch_active_integrated_terminal(
+				vscode.window.activeTerminal,
+				bin_dir,
+				backend,
+				from_v,
+				to_n
+			);
 		} catch (e) {
 			report_nodeswitcher_failure(context, `NodeSwitcher could not switch to Node ${desired}.`, e);
 			return 'dismissed';
@@ -3500,7 +3607,16 @@ async function run_project_mismatch_prompt(
 	if (choice === 'Keep current') {
 		await context.workspaceState.update(MISMATCH_KEEP_CURRENT_KEY, true);
 		try {
-			await apply_node_environment(context, current_n, backend, true);
+			const from_v = context.workspaceState.get<string>(VERSION_STATE_KEY);
+			const { bin_dir } = await apply_node_environment(context, current_n, backend, true);
+			const to_n = normalize_version(current_n) || current_n;
+			post_switch_active_integrated_terminal(
+				vscode.window.activeTerminal,
+				bin_dir,
+				backend,
+				from_v,
+				to_n
+			);
 			await persist_project_selection(context, current_n, backend);
 		} catch (e) {
 			report_nodeswitcher_failure(context, 'NodeSwitcher could not update the environment.', e);

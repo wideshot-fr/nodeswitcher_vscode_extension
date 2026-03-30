@@ -10,6 +10,11 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - **Sidebar — version from `package.json`**: Detect or suggest the Node version the workspace needs by reading **`package.json`** (e.g. `engines.node`, and dependency-driven constraints where feasible), and surface that in the sidebar so you can align the active version quickly.
 
+## [0.1.17] - 2026-03-30
+
+- **Active integrated terminal**: After a successful switch (version picker or project-mismatch actions), the **focused** integrated terminal prepends Node’s **bin** to `PATH` (and sets **`N_PREFIX`** when using **`n`**), then prints `NodeSwitcher: node version change from v… to v…`. **Windows**: **PowerShell** (default), **cmd.exe**, and **bash-style** / **WSL** shells when `shellPath` is detected; **macOS / Linux**: POSIX `export` style.
+- **Validation note**: Behaviour is **in good shape on Windows** in current testing; **macOS** will be re-checked on hardware in the next few days — maintainers will post an update when that lands.
+
 ## [0.1.16] - 2026-03-29
 
 - **Docs**: README **Contact** logo uses hosted **`logo-white.png`** on the NodeSwitcher S3 assets path.

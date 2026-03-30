@@ -3,7 +3,7 @@
   "publisher": "wideshot",
   "displayName": "NodeSwitcher — Node & NVM version manager",
   "description": "Node version manager for VS Code: switch and install Node.js from the status bar and sidebar using nvm (nvm-sh on macOS/Linux, nvm-windows on Windows) or n. Reads .nvmrc, package.json engines, and .nodeswitcher.",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "keywords": [
     "nvm",
     "nvm-windows",
