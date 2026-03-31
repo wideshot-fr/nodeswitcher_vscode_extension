@@ -10,6 +10,10 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 - **Sidebar — version from `package.json`**: Detect or suggest the Node version the workspace needs by reading **`package.json`** (e.g. `engines.node`, and dependency-driven constraints where feasible), and surface that in the sidebar so you can align the active version quickly.
 
+## [0.1.18] - 2026-03-31
+
+- **Fix**: When `.nodeswitcher` pins a Node version that differs from the active one, show **a single** information notification — the extra toast from the status-bar repaint is skipped. The project mismatch dialog still offers **Use project version**, **Keep current**, and **Open picker** (parity with the removed duplicate).
+
 ## [0.1.17] - 2026-03-30
 
 - **Active integrated terminal**: After a successful switch (version picker or project-mismatch actions), the **focused** integrated terminal prepends Node’s **bin** to `PATH` (and sets **`N_PREFIX`** when using **`n`**), then prints `NodeSwitcher: node version change from v… to v…`. **Windows**: **PowerShell** (default), **cmd.exe**, and **bash-style** / **WSL** shells when `shellPath` is detected; **macOS / Linux**: POSIX `export` style.

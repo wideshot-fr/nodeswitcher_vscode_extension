@@ -73,7 +73,11 @@ function build_requirements_html(csp_source: string, nonce: string, platform: No
 	<p class="foot">After installing, reload the VS Code window if NodeSwitcher still cannot find your version manager.</p>
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
-		document.getElementById('gotIt').addEventListener('click', () => vscode.postMessage({ type: 'gotIt' }));
+		document.getElementById('gotIt').addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			vscode.postMessage({ type: 'gotIt' });
+		});
 		document.body.addEventListener('click', (e) => {
 			const el = e.target;
 			if (el && el.dataset && el.dataset.url) {
@@ -110,12 +114,14 @@ function open_requirements_panel(context: vscode.ExtensionContext, mark_seen_on_
 	requirements_panel = panel;
 
 	const sub = panel.webview.onDidReceiveMessage(async (msg: { type?: string; url?: string }) => {
-		if (msg.type === 'openUrl' && msg.url) {
+		if (msg?.type === 'openUrl' && msg.url) {
 			await vscode.env.openExternal(vscode.Uri.parse(msg.url));
 			return;
 		}
-		if (msg.type === 'gotIt') {
-			panel.dispose();
+		if (msg?.type === 'gotIt') {
+			queueMicrotask(() => {
+				panel.dispose();
+			});
 		}
 	});
 

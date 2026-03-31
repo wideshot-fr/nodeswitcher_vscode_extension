@@ -3285,7 +3285,7 @@ async function apply_project_selection_if_present(
 			const fp = `${desired}::${current_n}`;
 			const seen = context.workspaceState.get<string>(MISMATCH_PROMPT_FP_KEY);
 			if (seen !== fp) {
-				const outcome = await run_project_mismatch_prompt(context, backend, desired, current_n);
+				const outcome = await run_project_mismatch_prompt(context, status_item, backend, desired, current_n);
 				if (outcome === 'dismissed') {
 					await context.workspaceState.update(MISMATCH_PROMPT_FP_KEY, fp);
 				}
@@ -3492,7 +3492,6 @@ async function paint_main_status_bar(
 			void maybe_show_project_mismatch_notice(
 				context,
 				status_item,
-				backend,
 				live,
 				declared_mismatch,
 				declared_spec,
@@ -3528,46 +3527,26 @@ async function paint_main_status_bar(
 async function maybe_show_project_mismatch_notice(
 	context: vscode.ExtensionContext,
 	status_item: vscode.StatusBarItem,
-	backend: NodeBackend,
 	live: string,
 	declared_mismatch: boolean,
 	declared_spec: string | undefined,
 	pin_mismatch: boolean,
 	pin: string | undefined
 ): Promise<void> {
+	if (pin_mismatch && pin) {
+		return;
+	}
 	const fp = `${live}::${declared_spec ?? ''}::${pin ?? ''}::${declared_mismatch ? 1 : 0}::${pin_mismatch ? 1 : 0}`;
 	const seen = context.workspaceState.get<string>(MISMATCH_NOTICE_FP_KEY);
 	if (seen === fp) {
 		return;
 	}
 	await context.workspaceState.update(MISMATCH_NOTICE_FP_KEY, fp);
-	const buttons = pin_mismatch && pin ? ['Switch to project version', 'Open picker', 'Dismiss'] : ['Open picker', 'Dismiss'];
 	const message =
-		pin_mismatch && pin
-			? `Project expects Node ${pin}. Current is ${live}.`
-			: declared_mismatch && declared_spec
-				? `Project node declaration is ${declared_spec}. Current is ${live}.`
-				: `Project node version does not match current Node ${live}.`;
-	const choice = await vscode.window.showInformationMessage(message, ...buttons);
-	if (choice === 'Switch to project version' && pin) {
-		try {
-			const from_v = context.workspaceState.get<string>(VERSION_STATE_KEY);
-			const { bin_dir } = await apply_node_environment(context, pin, backend, false);
-			const pin_n = normalize_version(pin) || pin;
-			post_switch_active_integrated_terminal(
-				vscode.window.activeTerminal,
-				bin_dir,
-				backend,
-				from_v,
-				pin_n
-			);
-			await persist_project_selection(context, pin, backend);
-			await paint_main_status_bar(context, status_item, pin, backend);
-		} catch (error) {
-			report_nodeswitcher_failure(context, `NodeSwitcher could not switch to Node ${pin}.`, error);
-		}
-		return;
-	}
+		declared_mismatch && declared_spec
+			? `Project node declaration is ${declared_spec}. Current is ${live}.`
+			: `Project node version does not match current Node ${live}.`;
+	const choice = await vscode.window.showInformationMessage(message, 'Open picker', 'Dismiss');
 	if (choice === 'Open picker') {
 		await open_version_picker(context, status_item);
 	}
@@ -3575,6 +3554,7 @@ async function maybe_show_project_mismatch_notice(
 
 async function run_project_mismatch_prompt(
 	context: vscode.ExtensionContext,
+	status_item: vscode.StatusBarItem,
 	backend: NodeBackend,
 	desired: string,
 	current_n: string
@@ -3582,7 +3562,8 @@ async function run_project_mismatch_prompt(
 	const choice = await vscode.window.showInformationMessage(
 		`NodeSwitcher: This project expects Node ${desired} (.nodeswitcher). The active version is ${current_n}.`,
 		'Use project version',
-		'Keep current'
+		'Keep current',
+		'Open picker'
 	);
 	if (choice === 'Use project version') {
 		await context.workspaceState.update(MISMATCH_KEEP_CURRENT_KEY, false);
@@ -3624,6 +3605,9 @@ async function run_project_mismatch_prompt(
 		}
 		return 'resolved';
 	}
+	if (choice === 'Open picker') {
+		await open_version_picker(context, status_item);
+	}
 	return 'dismissed';
 }
 
@@ -3649,7 +3633,7 @@ export async function run_resolve_project_node_mismatch_command(
 		await paint_main_status_bar(context, status_item, cur, backend);
 		return;
 	}
-	const outcome = await run_project_mismatch_prompt(context, backend, pin, cur);
+	const outcome = await run_project_mismatch_prompt(context, status_item, backend, pin, cur);
 	if (outcome === 'dismissed') {
 		await context.workspaceState.update(MISMATCH_PROMPT_FP_KEY, `${pin}::${cur}`);
 	} else {
